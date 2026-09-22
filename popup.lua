@@ -184,7 +184,6 @@ function M.build(rows, opts, samples)
 	return wibox.widget({
 		body,
 		margins = dpi(14),
-		forced_width = dpi(opts.popup_width or 300),
 		widget = wibox.container.margin,
 	})
 end
@@ -203,8 +202,13 @@ function M.attach(widget, model, opts)
 		if popup then
 			return popup
 		end
+		-- awful.popup measures its content at 9999 px unless maximum_width is set; wrapped
+		-- text would then be measured as one line and get clipped at the bottom.
+		local width = dpi(opts.popup_width or 300)
 		popup = awful.popup({
 			widget = wibox.widget({ layout = wibox.layout.fixed.vertical }),
+			minimum_width = width,
+			maximum_width = width,
 			ontop = true,
 			visible = false,
 			bg = c.bg,
