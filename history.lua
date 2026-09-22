@@ -8,7 +8,9 @@ local M = {}
 M.MAX_SAMPLES = 4000
 M.MAX_AGE = 8 * 86400
 M.LOOKBACK = { five_hour = 2 * 3600, seven_day = 24 * 3600, scoped = 24 * 3600 }
-M.MIN_SPAN = 600 -- seconds between the first and last sample before a rate is trusted
+-- Seconds between the first and last sample before a rate is trusted. Short spans on the
+-- weekly window would extrapolate a few busy minutes into a whole week.
+M.MIN_SPAN = { five_hour = 900, seven_day = 3 * 3600, scoped = 3 * 3600 }
 
 local function parse_line(line)
 	local t, key, pct, resets = line:match("^(%d+),([^,]+),([%d%.%-]+),(%d*)%s*$")
@@ -153,7 +155,8 @@ function M.rate(samples, key, now, lookback, resets_at)
 			end
 		end
 	end
-	if not first or not last or last.t - first.t < M.MIN_SPAN then
+	local min_span = M.MIN_SPAN[key] or M.MIN_SPAN[key:match("^scoped") and "scoped" or "five_hour"] or 900
+	if not first or not last or last.t - first.t < min_span then
 		return nil
 	end
 	local dp = last.percent - first.percent

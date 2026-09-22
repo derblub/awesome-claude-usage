@@ -106,21 +106,20 @@ function M.build(rows, opts, samples)
 			layout = wibox.layout.fixed.vertical,
 			spacing = dpi(4),
 		})
-		local notes = {}
 		if note then
-			notes[#notes + 1] = span(note, c.muted)
+			row:add(textbox(span(note, c.muted), f_small))
 		end
 		if extra.forecast then
 			local fcolor = extra.forecast_level == "normal" and c.muted or level_color(extra.forecast_level)
-			notes[#notes + 1] = span(extra.forecast, fcolor)
-		end
-		if #notes > 0 then
-			row:add(textbox(table.concat(notes, span(" · ", c.muted)), f_small))
+			row:add(textbox(span(extra.forecast, fcolor), f_small))
 		end
 		if extra.series and #extra.series >= 2 then
+			-- Show at least one hour, at most sparkline_hours, starting where the data starts.
+			local first = extra.series[1].t
+			local from = math.max(spark_from, math.min(first, now - 3600))
 			row:add(bar.sparkline({
 				points = extra.series,
-				from = spark_from,
+				from = from,
 				to = now,
 				color = color,
 				track = c.track,
@@ -215,9 +214,6 @@ function M.attach(widget, model, opts)
 			shape = function(cr, w, h)
 				gears.shape.rounded_rect(cr, w, h, radius)
 			end,
-			preferred_positions = { "top", "bottom" },
-			preferred_anchors = "middle",
-			offset = { y = dpi(6) },
 		})
 		return popup
 	end
@@ -243,13 +239,27 @@ function M.attach(widget, model, opts)
 			fill(model.state)
 		end
 		local geo = mouse.current_widget_geometry
+		-- A placement function is re-applied by awful.popup whenever the content changes size,
+		-- so a growing popup stays on screen instead of sliding under the bar.
 		if opts.popup_placement then
-			opts.popup_placement(p, geo)
+			p.placement = function(d)
+				return opts.popup_placement(d, geo)
+			end
 		elseif geo then
-			p:move_next_to(geo)
+			p.placement = function(d)
+				return awful.placement.next_to(d, {
+					preferred_positions = { "top", "bottom" },
+					preferred_anchors = "middle",
+					geometry = geo,
+					margins = { top = dpi(6), bottom = dpi(6) },
+					honor_workarea = true,
+				})
+			end
 		else
-			awful.placement.under_mouse(p)
-			awful.placement.no_offscreen(p)
+			p.placement = function(d)
+				awful.placement.under_mouse(d)
+				return awful.placement.no_offscreen(d)
+			end
 		end
 		p.visible = true
 	end

@@ -57,6 +57,15 @@ describe("history.rate/forecast/pace", function()
 		assert_nil(history.rate(samples, "five_hour", 4600, 7200, 30000))
 		assert_nil(history.rate(samples, "seven_day", 4700, 86400, 99999))
 	end)
+	it("needs a longer span for the weekly window", function()
+		local weekly = {
+			{ t = 1000, key = "seven_day", percent = 6, resets_at = 99999 },
+			{ t = 1000 + 1800, key = "seven_day", percent = 7, resets_at = 99999 },
+			{ t = 1000 + 4 * 3600, key = "seven_day", percent = 9, resets_at = 99999 },
+		}
+		assert_nil(history.rate(weekly, "seven_day", 1000 + 1800, 86400, 99999))
+		assert_true(history.rate(weekly, "seven_day", 1000 + 4 * 3600, 86400, 99999) > 0)
+	end)
 	it("forecasts exhaustion before the reset", function()
 		local fc = history.forecast({ percent = 30, resets_at = 20000 }, 20 / 3600, 4600)
 		assert_eq(fc.exhaust_at, 4600 + 12600)
