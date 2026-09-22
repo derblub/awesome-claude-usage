@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1] - 2026-09-22
+
+### Fixed
+- `toggle_popup()` places the popup next to the widget instead of the screen centre; the widget
+  derives its own position from the wibox hierarchy (`geometry_hint()`).
+
 ## [0.5.0] - 2026-09-22
 
 ### Added
@@ -65,6 +71,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Desktop notifications when a window crosses the warn/crit thresholds.
 - `contrib/statusline-cache.sh` helper for the Claude Code statusLine.
 
+[0.5.1]: https://github.com/derblub/awesome-claude-usage/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/derblub/awesome-claude-usage/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/derblub/awesome-claude-usage/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/derblub/awesome-claude-usage/compare/v0.2.0...v0.3.0

@@ -118,17 +118,20 @@ function M.new(opts)
 	return w
 end
 
---- Pin or unpin the popup without the mouse (bind it to a key). Uses the widget on the
---- focused screen when there is one per screen, otherwise the first one; the popup is
---- centred on the focused screen when the widget's position is unknown.
+--- Pin or unpin the popup without the mouse (bind it to a key). Prefers the widget on the
+--- focused screen and places the popup next to it; falls back to the centre of the
+--- focused screen when no widget position is known yet.
 function M.toggle_popup()
 	local awful = require("awful")
-	local target = _widgets[1]
+	local focused = awful.screen.focused()
+	local target, geo = nil, nil
 	for _, w in ipairs(_widgets) do
-		if w.screen == awful.screen.focused() then
-			target = w
+		local g = w.geometry_hint and w.geometry_hint() or nil
+		if g and (not target or g.screen == focused) then
+			target, geo = w, g
 		end
 	end
+	target = target or _widgets[1]
 	if not target or not target.popup then
 		return false
 	end
@@ -136,10 +139,29 @@ function M.toggle_popup()
 		target.popup:hide()
 		return false
 	end
-	local s = awful.screen.focused()
-	local g = s.geometry
-	target.popup:pin({ x = g.x + g.width / 2, y = g.y + g.height / 2, width = 1, height = 1 })
+	if not geo then
+		local g = focused.geometry
+		geo = { x = g.x + g.width / 2, y = g.y + g.height / 2, width = 1, height = 1 }
+	end
+	target.popup:pin(geo)
 	return true
+end
+
+--- Screen geometry of the created widgets (diagnostics; false before the first draw).
+function M.widget_geometries()
+	local out = {}
+	for i, w in ipairs(_widgets) do
+		local g = w.geometry_hint and w.geometry_hint() or nil
+		if g and g.drawable then
+			local wg = g.drawable:geometry()
+			local bw = g.drawable.border_width or 0
+			out[i] = { x = wg.x + bw + g.x, y = wg.y + bw + g.y, width = g.width, height = g.height,
+				screen = g.screen and g.screen.index or nil }
+		else
+			out[i] = false
+		end
+	end
+	return out
 end
 
 --- Close any pinned or open popup.

@@ -244,7 +244,8 @@ awful.key({ modkey, "Shift" }, "u", function()
 end, { description = "Claude usage", group = "launcher" })
 ```
 
-The popup opens pinned and centred on the focused screen; Escape or any click closes it.
+The popup opens pinned next to the widget (preferring the one on the focused screen);
+Escape or any click closes it.
 
 The state table:
 

@@ -99,6 +99,46 @@ function M.new(model, opts)
 		})
 	end
 
+	-- Remember the wibox and drawable we are drawn into, so the popup can be placed
+	-- next to the widget without the mouse being over it (see geometry_hint).
+	local orig_draw = container.draw
+	container.draw = function(self, context, cr, width, height)
+		self._context_wibox = context.wibox
+		self._context_drawable = context.drawable
+		if orig_draw then
+			return orig_draw(self, context, cr, width, height)
+		end
+	end
+
+	--- Geometry of this widget relative to its wibox (plus `drawable` and `screen`), in the
+	--- same shape as mouse.current_widget_geometry, or nil before its first draw.
+	--- awful.placement.next_to needs the drawable to turn it into screen coordinates.
+	function container.geometry_hint()
+		local wb, d = container._context_wibox, container._context_drawable
+		if not wb or not d or not d._widget_hierarchy then
+			return nil
+		end
+		local function walk(h)
+			if h:get_widget() == container then
+				return h
+			end
+			for _, child in ipairs(h:get_children()) do
+				local found = walk(child)
+				if found then
+					return found
+				end
+			end
+			return nil
+		end
+		local h = walk(d._widget_hierarchy)
+		if not h then
+			return nil
+		end
+		local w, hgt = h:get_size()
+		local x, y, ww, hh = h:get_matrix_to_device():transform_rectangle(0, 0, w, hgt)
+		return { x = x, y = y, width = ww, height = hh, drawable = wb, screen = wb.screen }
+	end
+
 	-- The glyph is only part of the text when no drawn icon is present.
 	local text_opts = setmetatable({ show_glyph = opts.icon == "glyph" and opts.show_glyph }, { __index = opts })
 
