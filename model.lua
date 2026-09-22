@@ -357,6 +357,12 @@ function M.setup(opts, deps)
 	_notifier = notify_mod.new(opts, deps)
 	math.randomseed(os.time() + math.floor((os.clock() * 1000) % 1000))
 
+	-- The plan name comes from the credentials file; read it once so cache-only states show it too.
+	local creds = credentials.read(opts.credentials_path, now())
+	if creds then
+		_creds = creds
+	end
+
 	if opts.history then
 		local ok, samples = pcall(history.load, opts.history_path)
 		_samples = ok and samples or {}
