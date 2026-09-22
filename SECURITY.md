@@ -10,6 +10,8 @@
 - **Reads** `~/.claude.json` (only the `cachedUsageUtilization` key), the cache
   file written by `contrib/statusline-cache.sh`, and `~/.claude/sessions/*.json`
   (session name, state, working directory, process id) to show running sessions.
+- **Receives** from the optional Claude Code hook only the event name, the notification
+  type and the session id, over `awesome-client`.
 - **Writes** only under `~/.cache/claude-usage/`: `rate_limits.json` (statusLine helper,
   mode 600), `history.csv` (timestamps and percentages, nothing else) and `last.json`
   (the CLI's cached state, which contains the same numbers plus the plan name).

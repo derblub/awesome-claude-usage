@@ -7,6 +7,8 @@ read_globals = {
 	"mouse",
 	"client",
 	"root",
+	"mousegrabber",
+	"keygrabber",
 }
 
 self = false

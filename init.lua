@@ -34,11 +34,49 @@ local function warn(msg)
 	end
 end
 
+--- Watch the cache file's directory with inotifywait; calls cb on every rewrite.
+local function watch_file(path, cb)
+	local awful = require("awful")
+	local dir, name = path:match("^(.*)/([^/]+)$")
+	if not dir then
+		return
+	end
+	os.execute('mkdir -p "' .. dir .. '" 2>/dev/null')
+	local pid = awful.spawn.with_line_callback({
+		"inotifywait",
+		"-m",
+		"-q",
+		"-e",
+		"close_write,moved_to",
+		"--format",
+		"%f",
+		dir,
+	}, {
+		stdout = function(line)
+			if line == name then
+				cb()
+			end
+		end,
+		exit = function(reason, code)
+			if reason == "exit" and code ~= 0 then
+				warn("inotifywait exited with code " .. tostring(code) .. "; cache watch off")
+			end
+		end,
+	})
+	if type(pid) ~= "number" then
+		error("cannot start inotifywait: " .. tostring(pid))
+	end
+	awesome.connect_signal("exit", function()
+		awesome.kill(pid, 9)
+	end)
+end
+
 local function real_deps()
 	local awful = require("awful")
 	local gears = require("gears")
 	local naughty = require("naughty")
 	return {
+		watch = watch_file,
 		now = os.time,
 		spawn = function(argv, cb)
 			awful.spawn.easy_async(argv, cb)
@@ -68,12 +106,59 @@ function M.setup(opts)
 	return M.opts
 end
 
+local _widgets = {}
+
 --- Create the wibar widget (starts polling on first use).
 ---@param opts table|nil
 ---@return table widget
 function M.new(opts)
 	local resolved = M.setup(opts)
-	return widget.new(model, resolved)
+	local w = widget.new(model, resolved)
+	_widgets[#_widgets + 1] = w
+	return w
+end
+
+--- Pin or unpin the popup without the mouse (bind it to a key). Uses the widget on the
+--- focused screen when there is one per screen, otherwise the first one; the popup is
+--- centred on the focused screen when the widget's position is unknown.
+function M.toggle_popup()
+	local awful = require("awful")
+	local target = _widgets[1]
+	for _, w in ipairs(_widgets) do
+		if w.screen == awful.screen.focused() then
+			target = w
+		end
+	end
+	if not target or not target.popup then
+		return false
+	end
+	if target.popup:is_pinned() then
+		target.popup:hide()
+		return false
+	end
+	local s = awful.screen.focused()
+	local g = s.geometry
+	target.popup:pin({ x = g.x + g.width / 2, y = g.y + g.height / 2, width = 1, height = 1 })
+	return true
+end
+
+--- Close any pinned or open popup.
+function M.hide_popup()
+	for _, w in ipairs(_widgets) do
+		if w.popup then
+			w.popup:hide()
+		end
+	end
+end
+
+--- Entry point for contrib/claude-usage-hook.sh.
+function M.hook(event, kind, session_id)
+	return model.hook(event, kind, session_id)
+end
+
+--- Rescan ~/.claude/sessions now.
+function M.refresh_sessions()
+	return model.poll_sessions()
 end
 
 function M.subscribe(a, b)
@@ -87,6 +172,7 @@ end
 function M.stop()
 	model.stop()
 	M.opts = nil
+	_widgets = {}
 end
 
 --- Diagnostic text for bug reports. Contains versions, effective options and the

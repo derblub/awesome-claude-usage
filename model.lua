@@ -101,8 +101,21 @@ local function current_interval()
 end
 
 --- Attach forecast, pacing and session info to a state.
+local function attach_context(st, t)
+	st.context = nil
+	if (_opts.context_max_age or 0) <= 0 then
+		return
+	end
+	local raw = statusline_cache.read(_opts.cache_path)
+	local ctx = raw and normalize.context_from(raw) or nil
+	if ctx and ctx.at and t - ctx.at <= _opts.context_max_age then
+		st.context = ctx
+	end
+end
+
 local function attach_analysis(st, t)
 	st.sessions = _sessions
+	attach_context(st, t)
 	if not _samples then
 		return
 	end
@@ -306,7 +319,7 @@ local function poll_sessions()
 		return
 	end
 	if prev and _notifier then
-		pcall(_notifier.sessions, _notifier, sessions_mod.diff(prev, summary))
+		pcall(_notifier.sessions, _notifier, sessions_mod.diff(prev, summary), t)
 	end
 	-- Work just stopped or started: fetch soon so the numbers follow.
 	if prev and not _inflight and not _backoff:blocked(t) and _timer then
@@ -377,6 +390,66 @@ function M.setup(opts, deps)
 			callback = poll_sessions,
 		})
 	end
+	if opts.watch_cache and deps.watch then
+		local ok, err = pcall(deps.watch, opts.cache_path, function()
+			M.cache_changed()
+		end)
+		if not ok then
+			warn("cache watch unavailable: " .. tostring(err))
+		end
+	end
+end
+
+local _last_cache_event = 0
+
+--- The statusLine cache was rewritten: read it now (debounced, honours in-flight fetches).
+function M.cache_changed()
+	if not _setup or _inflight then
+		return
+	end
+	local t = now()
+	if t - _last_cache_event < 2 then
+		return
+	end
+	_last_cache_event = t
+	if _timer then
+		_timer:stop()
+	end
+	tick()
+end
+
+--- Rescan the sessions directory now (used by the Claude Code hook).
+function M.poll_sessions()
+	if _setup and _opts.sessions then
+		poll_sessions()
+	end
+end
+
+--- A Claude Code hook fired. kind is the notification_type for Notification events.
+---@param event string hook_event_name
+---@param kind string|nil
+---@param session_id string|nil
+function M.hook(event, kind, session_id)
+	if not _setup then
+		return
+	end
+	local needs_user = {
+		permission_prompt = true,
+		idle_prompt = true,
+		agent_needs_input = true,
+		elicitation_dialog = true,
+		elicitation_url_dialog = true,
+	}
+	if event == "Notification" and kind and needs_user[kind] and _notifier then
+		local session = nil
+		for _, s in ipairs((_sessions and _sessions.list) or {}) do
+			if session_id and s.session_id == session_id then
+				session = s
+			end
+		end
+		pcall(_notifier.attention, _notifier, session or { session_id = session_id }, now())
+	end
+	M.poll_sessions()
 end
 
 --- Subscribe to state updates. Calls fn immediately when a state exists.

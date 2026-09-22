@@ -55,14 +55,20 @@ function M.new(model, opts)
 		})
 	end
 
+	if opts.compact then
+		textbox.visible = false
+	end
+
 	local container
+	local fill_percent = 0
 	if chip then
 		local radius = dpi(opts.chip.radius or 6)
+		local pad_x = opts.compact and dpi(opts.chip.padding_x or 8) + dpi(6) or dpi(opts.chip.padding_x or 8)
 		container = wibox.widget({
 			{
 				inner,
-				left = dpi(opts.chip.padding_x or 8),
-				right = dpi(opts.chip.padding_x or 8),
+				left = pad_x,
+				right = pad_x,
 				top = dpi(opts.chip.padding_y or 1),
 				bottom = dpi(opts.chip.padding_y or 1),
 				widget = wibox.container.margin,
@@ -74,6 +80,18 @@ function M.new(model, opts)
 			end,
 			widget = wibox.container.background,
 		})
+		if opts.compact then
+			-- The chip itself becomes the bar: track colour behind, level colour filling from the left.
+			container.bg = opts.chip.track or "#3A3835"
+			container.bgimage = function(_, cr, width, height)
+				local fill = width * math.max(0, math.min(fill_percent, 100)) / 100
+				if fill > 0 then
+					cr:set_source(gears.color(container._fill_color or opts.chip.normal))
+					cr:rectangle(0, 0, fill, height)
+					cr:fill()
+				end
+			end
+		end
 	else
 		container = wibox.widget({
 			inner,
@@ -86,7 +104,11 @@ function M.new(model, opts)
 
 	local function render(state)
 		local text = gears.string.xml_escape(format.bar_text(state, text_opts))
-		if chip then
+		if chip and opts.compact then
+			fill_percent = format.max_percent(state, opts) or 0
+			container._fill_color = format.chip_color(state, opts)
+			container:emit_signal("widget::redraw_needed")
+		elseif chip then
 			container.bg = format.chip_color(state, opts)
 		elseif opts.color_target ~= "none" then
 			local color = format.color_for(state, opts)
@@ -95,6 +117,14 @@ function M.new(model, opts)
 			end
 		end
 		textbox:set_markup(text)
+		if opts.compact then
+			-- keep the flags visible even in compact mode
+			local flags = text:match("[%$\u{2691}!]+%s*$")
+			textbox.visible = flags ~= nil
+			if flags then
+				textbox:set_markup(flags)
+			end
+		end
 	end
 
 	render(model.state)

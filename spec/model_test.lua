@@ -254,3 +254,71 @@ describe("model (cache preference, sessions, history)", function()
 		os.remove(path)
 	end)
 end)
+
+describe("model (hook, cache watch)", function()
+	it("reacts to a cache rewrite by reading the fresh cache", function()
+		local watched = nil
+		local deps = H.deps()
+		deps.watch = function(path, cb)
+			watched = { path = path, cb = cb }
+		end
+		model.stop()
+		local opts = config.resolve({
+			credentials_path = "spec/fixtures/credentials_ok.json",
+			cache_path = "spec/fixtures/statusline.json",
+			claude_json_path = "spec/fixtures/nope.json",
+			jitter = 0,
+			history = false,
+			sessions = false,
+			fresh_cache_max_age = 120,
+			watch_cache = true,
+		})
+		model.setup(opts, deps)
+		assert_true(watched ~= nil and watched.path == "spec/fixtures/statusline.json")
+		deps.t = 1758560000 + 30
+		watched.cb()
+		assert_eq(#deps.spawned, 0)
+		assert_eq(model.state.source, "statusline")
+		assert_eq(model.state.next_fetch_at, deps.t + 300)
+		-- debounced
+		local before = deps.timers[1].again_calls
+		watched.cb()
+		assert_eq(deps.timers[1].again_calls, before)
+	end)
+
+	it("notifies once from a hook and rescans sessions", function()
+		local dir = "spec/tmp/sessions_hook"
+		os.execute("mkdir -p " .. dir)
+		local f = assert(io.open(dir .. "/7.json", "w"))
+		f:write('{"pid":7,"sessionId":"sess-7","status":"busy","name":"hooked","statusUpdatedAt":1}')
+		f:close()
+		local deps = H.deps()
+		deps.sessions = {
+			list = function()
+				return { "7.json" }
+			end,
+			alive = function()
+				return true
+			end,
+		}
+		model.stop()
+		model.setup(config.resolve({
+			credentials_path = "spec/fixtures/credentials_ok.json",
+			cache_path = "spec/fixtures/nope.json",
+			claude_json_path = "spec/fixtures/nope.json",
+			jitter = 0,
+			history = false,
+			sessions = true,
+			sessions_dir = dir,
+		}), deps)
+		model.hook("Notification", "permission_prompt", "sess-7")
+		assert_eq(#deps.notifications, 1)
+		assert_eq(deps.notifications[1].message, "hooked needs your attention")
+		model.hook("Notification", "permission_prompt", "sess-7")
+		assert_eq(#deps.notifications, 1, "deduplicated")
+		model.hook("Notification", "auth_success", "sess-7")
+		model.hook("Stop", "", "sess-7")
+		assert_eq(#deps.notifications, 1)
+		os.remove(dir .. "/7.json")
+	end)
+end)

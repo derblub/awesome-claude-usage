@@ -18,7 +18,29 @@ function M.new(opts, deps)
 		windows = {}, -- key -> { level, percent, resets_at }
 		fail_count = 0,
 		error_notified = false,
+		last_attention = {}, -- session key -> epoch of the last attention notification
 	}, Notifier)
+end
+
+local ATTENTION_WINDOW = 60
+
+--- Announce that a session needs the user; repeats within a minute are dropped.
+---@param session table|nil { name, pid, session_id }
+---@param now integer
+---@return boolean sent
+function Notifier:attention(session, now)
+	if not self.opts.notify_attention then
+		return false
+	end
+	local key = session and (session.session_id or session.pid or session.name) or "unknown"
+	local last = self.last_attention[key]
+	if last and now - last < ATTENTION_WINDOW then
+		return false
+	end
+	self.last_attention[key] = now
+	local name = session and (session.name or (session.pid and ("pid " .. tostring(session.pid)))) or "A session"
+	self:emit({ title = "Claude Code", message = name .. " needs your attention", urgency = "normal" })
+	return true
 end
 
 function Notifier:emit(args)
@@ -67,11 +89,12 @@ end
 
 --- Announce session transitions (see sessions.diff).
 ---@param events table
-function Notifier:sessions(events)
+function Notifier:sessions(events, now)
+	now = now or os.time()
 	for _, ev in ipairs(events or {}) do
 		local name = ev.session and (ev.session.name or ("pid " .. tostring(ev.session.pid))) or "a session"
-		if ev.kind == "attention" and self.opts.notify_attention then
-			self:emit({ title = "Claude Code", message = name .. " needs your attention", urgency = "normal" })
+		if ev.kind == "attention" then
+			self:attention(ev.session, now)
 		elseif ev.kind == "finished" and self.opts.notify_finished then
 			self:emit({ title = "Claude Code", message = name .. " finished", urgency = "low" })
 		end

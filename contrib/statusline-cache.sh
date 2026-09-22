@@ -2,11 +2,10 @@
 # statusline-cache.sh - Claude Code statusLine helper for awesome-claude-usage.
 #
 # Claude Code pipes a JSON document to the statusLine command on every turn.
-# For Pro/Max subscribers it contains a "rate_limits" object. This script
-# stores that object (plus a timestamp) in
+# This script stores the parts the widget can use in
 #   $XDG_CACHE_HOME/claude-usage/rate_limits.json   (default ~/.cache/...)
-# so the widget can read fresh data without touching the network, then hands
-# the unchanged JSON to an optional downstream statusLine command.
+#     { ts, rate_limits, context: { used_percentage, size, input_tokens }, model, session_id }
+# and then hands the unchanged JSON to an optional downstream statusLine command.
 #
 # settings.json example (no existing statusline):
 #   "statusLine": { "type": "command",
@@ -23,8 +22,17 @@ if command -v jq >/dev/null 2>&1; then
 	(
 		umask 077
 		mkdir -p "$cache_dir" 2>/dev/null || exit 0
-		out=$(printf '%s' "$input" \
-			| jq -c '{ts: (now | floor), rate_limits: .rate_limits} | select(.rate_limits != null)' 2>/dev/null) \
+		out=$(printf '%s' "$input" | jq -c '{
+			ts: (now | floor),
+			rate_limits: .rate_limits,
+			context: (if .context_window then {
+				used_percentage: .context_window.used_percentage,
+				size: .context_window.context_window_size,
+				input_tokens: .context_window.total_input_tokens
+			} else null end),
+			model: .model.display_name,
+			session_id: .session_id
+		} | select(.rate_limits != null or .context != null)' 2>/dev/null) \
 			|| exit 0
 		[ -n "$out" ] || exit 0
 		tmp=$(mktemp "$cache_dir/.rate_limits.XXXXXX" 2>/dev/null) || exit 0
@@ -39,6 +47,8 @@ fi
 if [ "$#" -gt 0 ]; then
 	printf '%s' "$input" | "$@"
 else
-	# Minimal standalone statusline: model name only.
-	printf '%s' "$input" | jq -r '.model.display_name // "Claude"' 2>/dev/null || printf 'Claude\n'
+	# Minimal standalone statusline: model name and context usage.
+	printf '%s' "$input" \
+		| jq -r '"\(.model.display_name // "Claude")\(if .context_window.used_percentage then " · \(.context_window.used_percentage | floor)% context" else "" end)"' 2>/dev/null \
+		|| printf 'Claude\n'
 fi

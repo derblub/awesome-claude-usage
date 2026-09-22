@@ -189,7 +189,33 @@ function M.from_statusline(raw, now)
 	if ts then
 		st.fetched_at = ts
 	end
+	st.context = M.context_from(raw)
 	return st
+end
+
+--- Active-session context window from the statusLine cache (nil when absent).
+---@param raw table
+---@return table|nil { percent, size, input_tokens, model, session_id, at }
+function M.context_from(raw)
+	if type(raw) ~= "table" then
+		return nil
+	end
+	local c = raw.context
+	if type(c) ~= "table" then
+		return nil
+	end
+	local pct = percent(c.used_percentage)
+	if pct == nil then
+		return nil
+	end
+	return {
+		percent = pct,
+		size = tonumber(c.size),
+		input_tokens = tonumber(c.input_tokens),
+		model = raw.model,
+		session_id = raw.session_id,
+		at = epoch_seconds(raw.ts),
+	}
 end
 
 --- Normalise the cachedUsageUtilization object of ~/.claude.json (or the whole file).

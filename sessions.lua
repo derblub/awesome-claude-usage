@@ -62,6 +62,7 @@ function M.read(dir, now, deps)
 				out[status] = out[status] + 1
 				out.list[#out.list + 1] = {
 					pid = data.pid,
+					session_id = data.sessionId,
 					name = data.name,
 					status = status,
 					raw_status = data.status,

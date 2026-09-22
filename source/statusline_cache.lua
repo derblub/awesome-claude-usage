@@ -19,7 +19,10 @@ function M.read(path)
 		return nil
 	end
 	local ok, data = pcall(json.decode, content)
-	if not ok or type(data) ~= "table" or type(data.rate_limits) ~= "table" then
+	if not ok or type(data) ~= "table" then
+		return nil
+	end
+	if type(data.rate_limits) ~= "table" and type(data.context) ~= "table" then
 		return nil
 	end
 	return data

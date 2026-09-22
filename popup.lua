@@ -234,15 +234,53 @@ function M.attach(widget, model, opts)
 	end
 
 	local handle = {}
+	local keygrabber = nil
+	local grabbing_mouse = false
 
-	function handle:show()
+	local function stop_grabs()
+		if keygrabber then
+			keygrabber:stop()
+			keygrabber = nil
+		end
+		if grabbing_mouse then
+			grabbing_mouse = false
+			mousegrabber.stop()
+		end
+	end
+
+	local function start_grabs()
+		if opts.popup_escape ~= false and not keygrabber then
+			keygrabber = awful.keygrabber({
+				stop_key = "Escape",
+				stop_event = "press",
+				autostart = true,
+				stop_callback = function()
+					keygrabber = nil
+					handle:hide()
+				end,
+			})
+		end
+		if opts.popup_click_away ~= false and not grabbing_mouse then
+			grabbing_mouse = true
+			mousegrabber.run(function(m)
+				if m.buttons[1] or m.buttons[2] or m.buttons[3] then
+					grabbing_mouse = false
+					handle:hide()
+					return false
+				end
+				return grabbing_mouse
+			end, "left_ptr")
+		end
+	end
+
+	function handle:show(anchor)
 		local p = ensure_popup()
 		if not unsub then
 			unsub = model.subscribe(fill)
 		else
 			fill(model.state)
 		end
-		local geo = mouse.current_widget_geometry
+		local geo = anchor or mouse.current_widget_geometry
 		-- A placement function is re-applied by awful.popup whenever the content changes size,
 		-- so a growing popup stays on screen instead of sliding under the bar.
 		if opts.popup_placement then
@@ -270,6 +308,7 @@ function M.attach(widget, model, opts)
 
 	function handle:hide()
 		pinned = false
+		stop_grabs()
 		if unsub then
 			unsub()
 			unsub = nil
@@ -279,13 +318,22 @@ function M.attach(widget, model, opts)
 		end
 	end
 
-	function handle:toggle_pinned()
+	function handle:pin(anchor)
+		handle:show(anchor)
+		pinned = true
+		start_grabs()
+	end
+
+	function handle:toggle_pinned(anchor)
 		if pinned then
 			handle:hide()
 		else
-			handle:show()
-			pinned = true
+			handle:pin(anchor)
 		end
+	end
+
+	function handle:is_pinned()
+		return pinned
 	end
 
 	widget:connect_signal("mouse::enter", function()

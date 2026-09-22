@@ -3,6 +3,21 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] - 2026-09-22
+
+### Added
+- Active session context window in the popup ("Active session: 41% of 1M context (Fable)"), fed by the
+  statusLine helper, which now also stores `context`, `model` and `session_id`.
+- `contrib/claude-usage-hook.sh`: a Claude Code hook (Notification, Stop) that makes the widget rescan
+  sessions immediately and raise the "needs your attention" notification without waiting for a scan.
+- Instant cache updates: with `inotify-tools` installed the widget reads the statusLine cache the moment
+  it is rewritten (`watch_cache`).
+- Compact mode (`compact = true`): icon only, the chip fills up like a bar; flags stay visible.
+- `bar_windows` chooses the windows in the bar text, `color_window` the window that colours the chip.
+- `$` marker in the bar while paid extra usage is being consumed (`spend_in_bar`).
+- Pinned popups close with Escape or a click anywhere (`popup_escape`, `popup_click_away`);
+  `claude_usage.toggle_popup()` pins the popup from a key binding, centred on the focused screen.
+
 ## [0.4.0] - 2026-09-22
 
 ### Added
@@ -50,6 +65,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Desktop notifications when a window crosses the warn/crit thresholds.
 - `contrib/statusline-cache.sh` helper for the Claude Code statusLine.
 
+[0.5.0]: https://github.com/derblub/awesome-claude-usage/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/derblub/awesome-claude-usage/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/derblub/awesome-claude-usage/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/derblub/awesome-claude-usage/compare/v0.1.0...v0.2.0

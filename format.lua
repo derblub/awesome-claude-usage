@@ -36,12 +36,40 @@ function M.level_for(pct, thresholds)
 	return "normal"
 end
 
---- Highest percentage over all usage windows (spend excluded).
+--- Look up a window by key: "five_hour", "seven_day" or "scoped:<name>".
 ---@param st table|nil
+---@param key string
+---@return table|nil
+function M.window(st, key)
+	if type(st) ~= "table" or type(key) ~= "string" then
+		return nil
+	end
+	if key == "five_hour" or key == "seven_day" then
+		return st[key]
+	end
+	local name = key:match("^scoped:(.+)$")
+	if name then
+		for _, w in ipairs(st.scoped or {}) do
+			if w.name == name then
+				return w
+			end
+		end
+	end
+	return nil
+end
+
+--- Percentage that drives colours: the highest window, or the one named by opts.color_window.
+---@param st table|nil
+---@param opts table|nil
 ---@return number|nil
-function M.max_percent(st)
+function M.max_percent(st, opts)
 	if type(st) ~= "table" then
 		return nil
+	end
+	local which = opts and opts.color_window or "max"
+	if which ~= "max" then
+		local w = M.window(st, which)
+		return w and w.percent or nil
 	end
 	local best = nil
 	local function consider(w)
@@ -58,8 +86,8 @@ function M.max_percent(st)
 end
 
 --- Overall level of a state.
-function M.state_level(st, thresholds)
-	return M.level_for(M.max_percent(st), thresholds)
+function M.state_level(st, thresholds, opts)
+	return M.level_for(M.max_percent(st, opts), thresholds)
 end
 
 --- Colour for the bar text, or nil to inherit the container's foreground.
@@ -75,7 +103,7 @@ function M.color_for(st, opts)
 		end
 		return colors.normal
 	end
-	local level = M.state_level(st, opts.thresholds or {})
+	local level = M.state_level(st, opts.thresholds or {}, opts)
 	if level == "crit" then
 		return colors.crit
 	elseif level == "warn" then
@@ -129,11 +157,38 @@ function M.bar_text(st, opts)
 		end
 		return glyph .. "--"
 	end
-	local text = glyph .. "5h " .. pct_text(st.five_hour) .. (opts.separator or " · ") .. "7d " .. pct_text(st.seven_day)
+	local parts = {}
+	if not opts.compact then
+		for _, key in ipairs(opts.bar_windows or { "five_hour", "seven_day" }) do
+			local label = key == "five_hour" and "5h" or key == "seven_day" and "7d" or key:match("^scoped:(.+)$") or key
+			parts[#parts + 1] = label .. " " .. pct_text(M.window(st, key))
+		end
+	end
+	local text = glyph .. table.concat(parts, opts.separator or " · ")
+	local spending = st.spend and st.spend.enabled and ((st.spend.percent or 0) > 0 or (st.spend.used or 0) > 0)
+	if opts.spend_in_bar and spending then
+		text = text .. (opts.spend_flag or " $")
+	end
 	if opts.sessions_in_bar and st.sessions and (st.sessions.attention or 0) > 0 then
 		text = text .. (opts.attention_flag or " !")
 	end
-	return text
+	return (text:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+--- One line for the active session's context window, nil when unknown.
+---@param ctx table|nil
+---@return string|nil
+function M.context_text(ctx)
+	if type(ctx) ~= "table" or type(ctx.percent) ~= "number" then
+		return nil
+	end
+	local size = ""
+	if ctx.size and ctx.size >= 1000 then
+		size = ctx.size >= 1000000 and string.format(" of %.0fM", ctx.size / 1000000)
+			or string.format(" of %dk", math.floor(ctx.size / 1000))
+	end
+	local model = ctx.model and (" (" .. tostring(ctx.model) .. ")") or ""
+	return string.format("Active session: %d%%%s context%s", M.round(ctx.percent), size, model)
 end
 
 --- Text and level for a forecast (see history.forecast).
@@ -309,6 +364,10 @@ function M.popup_lines(st, now, opts)
 		lines[#lines + 1] = "No usage data"
 	end
 
+	local context_line = M.context_text(st.context)
+	if context_line then
+		lines[#lines + 1] = context_line
+	end
 	local sessions_line = M.sessions_text(st.sessions)
 	if sessions_line then
 		lines[#lines + 1] = sessions_line
@@ -344,7 +403,7 @@ function M.chip_color(st, opts)
 		end
 		return chip.normal or brand.palette.orange
 	end
-	return brand.level_color(M.state_level(st, opts.thresholds or {}), chip)
+	return brand.level_color(M.state_level(st, opts.thresholds or {}, opts), chip)
 end
 
 local SUBSCRIPTION_NAME = { max = "Max", pro = "Pro", team = "Team", enterprise = "Enterprise", free = "Free" }
@@ -451,6 +510,7 @@ function M.popup_rows(st, now, opts)
 		rows.empty = "No usage data"
 	end
 
+	rows.context = M.context_text(st.context)
 	if st.sessions then
 		rows.sessions = {
 			text = M.sessions_text(st.sessions),

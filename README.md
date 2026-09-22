@@ -55,6 +55,11 @@ click opens Claude Code.
 - Adaptive polling: every 5 minutes while a session works, every 15 minutes otherwise, and a
   fresh statusLine cache skips the network call entirely
 - Desktop notification once per threshold crossing, re-armed after the window resets
+- The active session's context window ("41% of 1M") and instant updates through a
+  Claude Code hook and an inotify watch on the statusLine cache
+- Compact mode (icon only, the chip fills up like a bar), a `$` marker for paid extra
+  usage, and a choice of which windows appear in the bar and colour the chip
+- Pinned popups close with Escape or a click anywhere; a key binding can open the popup
 - `cli.lua` prints the same data for waybar, polybar, tmux or your prompt
 - Left click opens a terminal with `claude` (configurable), right click refreshes, middle click pins the popup
 - Three data sources with automatic fallback:
@@ -131,6 +136,9 @@ claude_usage.new({
     interval_idle = 900,      -- fetch interval while no session is working
     sessions_in_bar = true,   -- append a flag to the bar text when a session waits for you
     attention_flag = " \u{2691}",
+    spend_in_bar  = true,     -- append " $" while paid extra usage is being consumed
+    watch_cache   = true,     -- read the statusLine cache the moment it changes (needs inotifywait)
+    context_max_age = 900,    -- show the active session's context window while the cache is this fresh
     notify_attention = true,  -- a session waits for a permission or an answer
     notify_finished = false,  -- a session went from working to idle
 
@@ -154,6 +162,9 @@ claude_usage.new({
                       stale = nil, icon = "#D97757" },  -- text/icon colours for style = "bare"
     color_target  = "text",   -- "none": never colour the text (style = "bare" only)
     format        = nil,      -- custom bar text, see below
+    compact       = false,    -- icon only; the chip fills up like a bar
+    bar_windows   = { "five_hour", "seven_day" }, -- windows in the bar text, also "scoped:Fable"
+    color_window  = "max",    -- window that colours the chip/text: "max", "five_hour", "seven_day", "scoped:<Model>"
 
     -- Popup
     popup         = true,     -- built-in hover popup; false to build your own
@@ -162,6 +173,8 @@ claude_usage.new({
                       track = "#3A3835", accent = "#D97757", warn = "#E39B3A", crit = "#C8442E" },
     popup_border_width = 1, popup_radius = 10,
     popup_show_scoped = true, popup_show_spend = true, popup_show_breakdown = true,
+    popup_escape = true,      -- Escape closes a pinned popup
+    popup_click_away = true,  -- a click anywhere closes a pinned popup
 
     -- Notifications (naughty)
     notify_threshold = true,  -- when a window crosses warn/crit
@@ -220,7 +233,18 @@ end)
 
 Besides `state` and `subscribe`, the module exposes `claude_usage.refresh({ force = true })`,
 `claude_usage.stop()`, `claude_usage.debug()` (a text dump for bug reports),
+`claude_usage.toggle_popup()` / `hide_popup()`, `claude_usage.refresh_sessions()`,
 `claude_usage.model.samples()` (the history samples) and `claude_usage.model.sessions()`.
+
+### Key binding
+
+```lua
+awful.key({ modkey, "Shift" }, "u", function()
+    require("claude_usage").toggle_popup()
+end, { description = "Claude usage", group = "launcher" })
+```
+
+The popup opens pinned and centred on the focused screen; Escape or any click closes it.
 
 The state table:
 
@@ -275,6 +299,32 @@ With an existing statusline script, append it as an argument:
 Requires `jq`. The cache only updates while a Claude Code session is running;
 the widget marks it stale after an hour and prefers the API when that works.
 To rely on the cache alone (no network at all): `sources = { "statusline" }`.
+
+The helper also stores the active session's context window (`used_percentage`, size,
+input tokens), the model name and the session id. The popup shows them as
+"Active session: 41% of 1M context (Fable)" while the cache is younger than
+`context_max_age`. With `inotify-tools` installed the widget picks up every rewrite
+of the cache instantly (`watch_cache`); otherwise it reads it on the next fetch.
+
+## The hook (instant "needs your attention")
+
+`contrib/claude-usage-hook.sh` is a [Claude Code hook](https://code.claude.com/docs/en/hooks)
+for the `Notification` and `Stop` events. It calls `awesome-client` with the event name,
+the notification type and the session id (nothing else), so the widget rescans
+`~/.claude/sessions` right away and raises the "needs your attention" notification for
+permission prompts, questions and idle prompts without waiting for the next scan.
+
+```json
+"hooks": {
+  "Notification": [{ "hooks": [{ "type": "command", "async": true, "timeout": 5,
+                     "command": "~/.config/awesome/claude_usage/contrib/claude-usage-hook.sh" }] }],
+  "Stop":         [{ "hooks": [{ "type": "command", "async": true, "timeout": 5,
+                     "command": "~/.config/awesome/claude_usage/contrib/claude-usage-hook.sh" }] }]
+}
+```
+
+`async` keeps Claude Code from waiting; without AwesomeWM (or `awesome-client`) the hook
+exits silently. Repeated attention notifications for the same session are dropped for a minute.
 
 ## CLI (waybar, polybar, tmux)
 
@@ -359,6 +409,9 @@ any `claude` command and the next check succeeds.
   (usage samples: time, window, percent) and `last.json` (CLI result cache).
 - `~/.claude/sessions/*.json` is read for session names, states and working directories;
   none of it leaves the machine.
+- The optional hook passes only the event name, the notification type and the session id
+  to `awesome-client`; the statusLine helper stores the context percentage, the model name
+  and the session id next to the rate limits.
 - No third-party services are involved.
 
 ## Troubleshooting
