@@ -33,6 +33,8 @@ click opens Claude Code.
 [Configuration](#configuration) ·
 [statusLine helper](#the-statusline-helper-fresh-data-without-network-calls) ·
 [CLI](#cli-waybar-polybar-tmux) ·
+[Forecast](#forecast-and-pacing) ·
+[Sessions](#sessions) ·
 [How it works](#how-polling-and-rate-limiting-work) ·
 [Security](#security) ·
 [Troubleshooting](#troubleshooting) ·
