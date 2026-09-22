@@ -3,8 +3,6 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
-
 ## [0.3.0] - 2026-09-22
 
 ### Added
@@ -36,3 +34,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Hover popup with reset times, model-scoped weekly limits, extra usage and data age.
 - Desktop notifications when a window crosses the warn/crit thresholds.
 - `contrib/statusline-cache.sh` helper for the Claude Code statusLine.
+
+[0.3.0]: https://github.com/derblub/awesome-claude-usage/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/derblub/awesome-claude-usage/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/derblub/awesome-claude-usage/releases/tag/v0.1.0
