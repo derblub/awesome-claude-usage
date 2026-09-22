@@ -2,6 +2,7 @@
 package.path = "./?.lua;./?/init.lua;" .. package.path
 
 local filter = arg and arg[1]
+os.execute("mkdir -p spec/tmp")
 local passed, failed = 0, 0
 local current = ""
 
