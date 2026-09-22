@@ -260,7 +260,7 @@ end
 
 --- Fetch now. With { force = true } the timer is ignored, the 429 backoff is not.
 ---@return boolean started
-function M.refresh(args)
+function M.refresh(_args)
 	if not _setup or _inflight then
 		return false
 	end

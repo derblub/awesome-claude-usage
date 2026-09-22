@@ -78,7 +78,11 @@ describe("format.popup_lines", function()
 		local st = state(3, 67, {
 			scoped = { { name = "Fable", percent = 51, resets_at = 1000 + 2 * 86400, is_active = true } },
 			spend = { enabled = true, percent = 12.34, used = 12.34, limit = 100, currency = "USD" },
-			breakdown = { { name = "Claude Code", percent = 89 }, { name = "Chats", percent = 11 }, { name = "Cowork", percent = 0 } },
+			breakdown = {
+				{ name = "Claude Code", percent = 89 },
+				{ name = "Chats", percent = 11 },
+				{ name = "Cowork", percent = 0 },
+			},
 			subscription = "max",
 			next_fetch_at = 1000 + 240,
 		})

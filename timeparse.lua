@@ -43,7 +43,7 @@ function M.iso8601(s)
 	end
 	rest = rest:gsub("^[%.,]%d+", "") -- fractional seconds
 	rest = rest:gsub("%s+$", "")
-	local offset = 0
+	local offset
 	if rest == "" or rest == "Z" or rest == "z" then
 		offset = 0
 	else
