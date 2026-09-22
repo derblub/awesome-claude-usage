@@ -1,13 +1,24 @@
-# awesome-claude-usage
+<h1 align="center">awesome-claude-usage</h1>
+
+<p align="center">
+  Your Claude Code limits, right in the AwesomeWM bar.
+</p>
+
+<p align="center">
+  <a href="https://github.com/derblub/awesome-claude-usage/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/derblub/awesome-claude-usage/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/derblub/awesome-claude-usage/releases"><img alt="Release" src="https://img.shields.io/github/v/release/derblub/awesome-claude-usage?color=D97757"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-FAF9F5?labelColor=1F1E1D"></a>
+  <img alt="Lua 5.4 / LuaJIT" src="https://img.shields.io/badge/lua-5.4%20%7C%20LuaJIT-1F1E1D?logo=lua">
+</p>
+
+<p align="center">
+  <img src="docs/hero.png" alt="The widget in the bar and its popup" width="720">
+</p>
 
 An [AwesomeWM](https://awesomewm.org/) wibar widget that shows how much of your
 [Claude Code](https://code.claude.com/) subscription limits you have used: the
-5-hour session window and the 7-day weekly window, exactly like `/usage` inside
-Claude Code, without opening a terminal.
-
-```
- 5h 3% · 7d 67%
-```
+5-hour session window and the 7-day weekly window, exactly what `/usage` prints
+inside Claude Code, without leaving your editor.
 
 It looks the part: a terracotta chip with the starburst icon in the bar, and a
 warm dark popup with one progress bar per window, reset times, per-model weekly
@@ -15,8 +26,16 @@ limits, extra usage and data age. The chip turns amber and red as you approach
 your limits, a desktop notification fires once per threshold crossing, and a
 click opens Claude Code.
 
-![bar screenshot](docs/screenshot.png)
-![popup screenshot](docs/popup.png)
+**Contents:**
+[Features](#features) ·
+[Requirements](#requirements) ·
+[Installation](#installation) ·
+[Configuration](#configuration) ·
+[statusLine helper](#the-statusline-helper-fresh-data-without-network-calls) ·
+[How it works](#how-polling-and-rate-limiting-work) ·
+[Security](#security) ·
+[Troubleshooting](#troubleshooting) ·
+[Development](#development)
 
 ## Features
 
@@ -35,6 +54,10 @@ click opens Claude Code.
 - Exponential backoff on HTTP 429 and network errors; the bar never hammers the endpoint
 - Reads the OAuth token only. It never refreshes or writes it, so it cannot log you out.
 - Pure Lua, no LuaRocks dependencies; `curl` is the only external tool (`jq` for the optional statusLine helper)
+
+| Bar | Popup |
+|---|---|
+| ![bar](docs/screenshot.png) | ![popup](docs/popup.png) |
 
 ## Requirements
 
@@ -68,7 +91,8 @@ s.mywibox:setup({
 ```
 
 The directory name does not matter: clone it as `claude_usage`, `awesome-claude-usage`
-or anything else and `require` that name.
+or anything else and `require` that name. A complete minimal configuration is in
+[`example/rc.lua`](example/rc.lua).
 
 ## Configuration
 
@@ -268,7 +292,14 @@ make lint     # luacheck (install via luarocks)
 
 The pure modules (`normalize`, `format`, `brand`, `timeparse`, `backoff`,
 `notify`, `model`) run without AwesomeWM; `widget.lua`, `popup.lua`, `icon.lua`
-and `init.lua` need it.
+and `init.lua` need it. See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout
+and the release steps.
+
+For bug reports, this prints versions, options and the current state without any secrets:
+
+```sh
+awesome-client 'return require("claude_usage").debug()'
+```
 
 ## License
 

@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-22
+
+### Added
+- `claude_usage.debug()` prints versions, effective options and the current state for bug reports (no secrets).
+- `example/rc.lua`, CONTRIBUTING.md, SECURITY.md, issue and pull request templates, Dependabot for the CI actions.
+
+### Changed
+- README with badges, hero image and a table of contents.
+
 ## [0.2.0] - 2026-09-22
 
 ### Added

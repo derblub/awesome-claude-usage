@@ -89,6 +89,50 @@ function M.stop()
 	M.opts = nil
 end
 
+--- Diagnostic text for bug reports. Contains versions, effective options and the
+--- current state, but never the token or account identifiers.
+---@return string
+function M.debug()
+	local lines = { "awesome-claude-usage " .. M.version }
+	local ok, awesome_ver = pcall(function()
+		return awesome.version
+	end)
+	lines[#lines + 1] = "awesome " .. (ok and tostring(awesome_ver) or "?") .. ", " .. _VERSION
+	local o = M.opts
+	if o then
+		lines[#lines + 1] = string.format(
+			"options: style=%s icon=%s interval=%d sources=%s thresholds=%d/%d popup=%s",
+			tostring(o.style),
+			tostring(o.icon),
+			o.interval,
+			table.concat(o.sources, ","),
+			o.thresholds.warn,
+			o.thresholds.crit,
+			tostring(o.popup)
+		)
+	else
+		lines[#lines + 1] = "options: not set up"
+	end
+	local st = model.state
+	if st then
+		local b = model.backoff()
+		lines[#lines + 1] = string.format(
+			"state: source=%s fetched=%s stale=%s error=%s backoff_attempt=%s",
+			tostring(st.source),
+			st.fetched_at and os.date("%Y-%m-%d %H:%M:%S", st.fetched_at) or "nil",
+			tostring(st.stale),
+			st.error and (tostring(st.error.code) .. " (" .. tostring(st.error.message) .. ")") or "nil",
+			b and tostring(b.attempt) or "?"
+		)
+		for _, line in ipairs(format.popup_lines(st, os.time(), o or {})) do
+			lines[#lines + 1] = "  " .. line
+		end
+	else
+		lines[#lines + 1] = "state: nil"
+	end
+	return table.concat(lines, "\n")
+end
+
 setmetatable(M, {
 	__call = function(_, opts)
 		return M.new(opts)
