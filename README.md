@@ -56,12 +56,13 @@ click opens Claude Code.
 - `cli.lua` prints the same data for waybar, polybar, tmux or your prompt
 - Left click opens a terminal with `claude` (configurable), right click refreshes, middle click pins the popup
 - Three data sources with automatic fallback:
-  1. Claude Code's OAuth usage endpoint (`api.anthropic.com/api/oauth/usage`), polled every 5 minutes
+  1. Claude Code's OAuth usage endpoint (`api.anthropic.com/api/oauth/usage`)
   2. a cache file written by the Claude Code **statusLine** (see below), no network needed
   3. `~/.claude.json`, Claude Code's own cached copy of the last `/usage` result
 - Exponential backoff on HTTP 429 and network errors; the bar never hammers the endpoint
 - Reads the OAuth token only. It never refreshes or writes it, so it cannot log you out.
-- Pure Lua, no LuaRocks dependencies; `curl` is the only external tool (`jq` for the optional statusLine helper)
+- Pure Lua, no LuaRocks dependencies; `curl` is the only external tool (`jq` for the optional
+  statusLine helper, a standalone `lua` for the CLI)
 
 | Bar | Popup |
 |---|---|
@@ -123,6 +124,7 @@ claude_usage.new({
 
     -- Sessions (~/.claude/sessions) and adaptive polling
     sessions      = true,     -- watch running Claude Code sessions
+    sessions_dir  = os.getenv("HOME") .. "/.claude/sessions",
     sessions_interval = 10,   -- seconds between directory scans (local files only)
     interval_idle = 900,      -- fetch interval while no session is working
     sessions_in_bar = true,   -- append a flag to the bar text when a session waits for you
@@ -132,8 +134,8 @@ claude_usage.new({
 
     -- History and forecast
     history       = true,     -- record samples, show burn rate / forecast / pacing
-    history_path  = "~/.cache/claude-usage/history.csv",
-    sparkline_hours = 24,
+    history_path  = (os.getenv("XDG_CACHE_HOME") or os.getenv("HOME") .. "/.cache") .. "/claude-usage/history.csv",
+    sparkline_hours = 24,     -- popup sparkline range
 
     -- Appearance
     font          = nil,      -- nil = beautiful.font; popup fonts are derived from it
@@ -213,6 +215,10 @@ claude_usage.subscribe(function(state)
     my_tooltip.text = table.concat(claude_usage.format.popup_lines(state, os.time(), claude_usage.opts), "\n")
 end)
 ```
+
+Besides `state` and `subscribe`, the module exposes `claude_usage.refresh({ force = true })`,
+`claude_usage.stop()`, `claude_usage.debug()` (a text dump for bug reports),
+`claude_usage.model.samples()` (the history samples) and `claude_usage.model.sessions()`.
 
 The state table:
 
@@ -294,6 +300,34 @@ files only. Waybar example:
 
 The `class` is `normal`, `warn`, `crit`, `stale` or `error` for styling.
 
+## Forecast and pacing
+
+Every fresh result is appended to `~/.cache/claude-usage/history.csv`
+(`epoch,window,percent,resets_at`, pruned to the last eight days). From the samples
+of the current reset cycle the widget derives a burn rate per window and shows:
+
+- **at this pace ~38% at reset** when the window will survive until its reset,
+- **at this pace empty in 1h 20m** (amber, red under an hour) when it will not,
+- **no usage lately** when the percentage has not moved.
+
+A forecast needs at least 15 minutes of samples for the 5-hour window and 3 hours
+for the weekly windows; before that the line is simply absent. The thin marker on a
+bar is the pacing point, the percentage an even spread over the window would be at
+right now. The sparkline under each bar shows the last `sparkline_hours` (at least one
+hour) of that window; a drop of more than 20 points is drawn as a reset.
+
+## Sessions
+
+Claude Code writes one small JSON file per running process to `~/.claude/sessions/`.
+The widget scans that directory every `sessions_interval` seconds (local files only)
+and skips files whose process is gone. States are mapped to *working* (`busy`),
+*idle* and *attention* (`waiting`, `needs_input`). The popup lists the counts, the bar
+text gets `attention_flag` appended while any session waits for you, and
+`notify_attention` / `notify_finished` control the desktop notifications. The scan
+also drives the polling interval: `interval` while something is working,
+`interval_idle` otherwise, plus one early fetch when work starts or stops.
+Set `sessions = false` to turn all of this off.
+
 ## How polling and rate limiting work
 
 The usage endpoint is the one Claude Code itself calls for `/usage`. It is not
@@ -318,8 +352,11 @@ any `claude` command and the next check succeeds.
 - The token is read from a file only you can read (mode 600) and passed to a
   local `curl` process as an argument. It is never logged, stored elsewhere or
   sent anywhere except `api.anthropic.com`.
-- Nothing is written to `~/.claude/`. The only file the project writes is its
-  own cache under `~/.cache/claude-usage/`, and only through the statusLine helper.
+- Nothing is written to `~/.claude/`. The project writes only under
+  `~/.cache/claude-usage/`: `rate_limits.json` (statusLine helper), `history.csv`
+  (usage samples: time, window, percent) and `last.json` (CLI result cache).
+- `~/.claude/sessions/*.json` is read for session names, states and working directories;
+  none of it leaves the machine.
 - No third-party services are involved.
 
 ## Troubleshooting
@@ -333,6 +370,9 @@ any `claude` command and the next check succeeds.
 | `!none` | every source failed | check the popup for the last error |
 | `5h --` | that window is absent from the response (e.g. no subscription) | nothing to do |
 | a box instead of the icon | `icon = "glyph"` without a Nerd Font | use `icon = "starburst"` or set `glyph` |
+| `⚑` after the numbers | a Claude Code session waits for your input or a permission | switch to that terminal; `sessions_in_bar = false` hides it |
+| no forecast line in the popup | fewer than 15 min (5h) / 3 h (weekly) of samples in this reset cycle | wait; check that `history.csv` is being written |
+| "stale" in the popup | the data comes from a cache older than `stale_after` | run `claude` or right-click to refresh |
 
 Awesome's error output (`~/.cache/awesome/stderr.log` or the tty) shows
 `claude_usage:` warnings for misconfiguration and subscriber errors.
@@ -345,8 +385,8 @@ make lint     # luacheck (install via luarocks)
 ```
 
 The pure modules (`normalize`, `format`, `brand`, `timeparse`, `backoff`,
-`notify`, `model`) run without AwesomeWM; `widget.lua`, `popup.lua`, `icon.lua`
-and `init.lua` need it. See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout
+`notify`, `history`, `sessions`, `model`, `cli`) run without AwesomeWM;
+`widget.lua`, `popup.lua`, `bar.lua`, `icon.lua` and `init.lua` need it. See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout
 and the release steps.
 
 For bug reports, this prints versions, options and the current state without any secrets:

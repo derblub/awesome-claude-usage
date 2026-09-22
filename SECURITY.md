@@ -7,10 +7,12 @@
 - **Sends** that token as a `Bearer` header to `https://api.anthropic.com/api/oauth/usage`
   through a local `curl` process. The token appears in that process's argument list,
   which is visible to your own user only.
-- **Reads** `~/.claude.json` (only the `cachedUsageUtilization` key) and the cache
-  file written by `contrib/statusline-cache.sh`.
-- **Writes** nothing except that cache file (`~/.cache/claude-usage/`, mode 600),
-  and only when you enable the statusLine helper.
+- **Reads** `~/.claude.json` (only the `cachedUsageUtilization` key), the cache
+  file written by `contrib/statusline-cache.sh`, and `~/.claude/sessions/*.json`
+  (session name, state, working directory, process id) to show running sessions.
+- **Writes** only under `~/.cache/claude-usage/`: `rate_limits.json` (statusLine helper,
+  mode 600), `history.csv` (timestamps and percentages, nothing else) and `last.json`
+  (the CLI's cached state, which contains the same numbers plus the plan name).
 
 It never refreshes, rotates or stores the token, never logs it, and talks to no
 service other than Anthropic's.

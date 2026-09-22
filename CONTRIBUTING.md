@@ -26,18 +26,24 @@ make          # luacheck + tests on Lua 5.4 and LuaJIT
 - `make lint` needs [luacheck](https://github.com/lunarmodules/luacheck).
 - Tests live in `spec/` and use the tiny runner in `spec/run.lua`
   (`describe`, `it`, `assert_eq`, `assert_true`, `assert_nil`, `assert_error`).
-  Run one group with `lua5.4 spec/run.lua "normalize"`.
+  Run one group with `lua5.4 spec/run.lua "normalize"`. Tests that need files write to
+  `spec/tmp/` (created by the runner, git-ignored).
+- Fixtures for the sessions directory live in `spec/fixtures/sessions/`; the tests inject a
+  fake `alive` check so no real process is needed.
 
 ## Code layout
 
 | File | Runs without awesome | Purpose |
 |---|---|---|
 | `init.lua` | no | public API, wires real dependencies |
-| `widget.lua`, `popup.lua`, `icon.lua` | no | wibox widgets, drawing |
-| `model.lua` | yes (injected deps) | scheduling, fallback chain, backoff, subscribers |
+| `widget.lua`, `popup.lua`, `icon.lua`, `bar.lua` | no | wibox widgets, cairo drawing (starburst, bars, sparkline) |
+| `model.lua` | yes (injected deps) | scheduling, fallback chain, backoff, sessions polling, subscribers |
 | `normalize.lua` | yes | raw API / statusLine / claude.json → canonical state |
+| `history.lua` | yes | samples on disk, burn rate, forecast, pacing |
+| `sessions.lua` | yes | `~/.claude/sessions` summary and transitions |
 | `format.lua`, `brand.lua`, `timeparse.lua`, `backoff.lua`, `notify.lua`, `config.lua` | yes | pure helpers |
 | `source/*.lua` | yes | credentials, curl, cache readers |
+| `cli.lua` | yes | standalone entry point for waybar, polybar, tmux |
 | `contrib/statusline-cache.sh` | – | Claude Code statusLine helper |
 
 Keep the pure modules free of `require("awful")` and friends so they stay testable.

@@ -17,8 +17,11 @@ local function claude_widget()
 		on_click = terminal .. " -e claude",
 		thresholds = { warn = 75, crit = 90 },
 		-- style = "bare",            -- text and icon only, colours from the theme
-		-- forced_width = 140,        -- fixed width so the bar does not jump
+		-- forced_width = 160,        -- fixed width so the bar does not jump
 		-- notify_reset = true,       -- also announce when a window resets
+		-- notify_finished = true,    -- also announce when a session finishes a turn
+		-- sessions = false,          -- no session tracking, fixed polling interval
+		-- history = false,           -- no history file, no forecast
 	})
 end
 
