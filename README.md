@@ -9,18 +9,23 @@ Claude Code, without opening a terminal.
  5h 3% · 7d 67%
 ```
 
-Hover for the details (reset times, per-model weekly limits, extra usage, data
-age), get a desktop notification when a window crosses a threshold, click to
-open Claude Code.
+It looks the part: a terracotta chip with the starburst icon in the bar, and a
+warm dark popup with one progress bar per window, reset times, per-model weekly
+limits, extra usage and data age. The chip turns amber and red as you approach
+your limits, a desktop notification fires once per threshold crossing, and a
+click opens Claude Code.
 
 ![bar screenshot](docs/screenshot.png)
 ![popup screenshot](docs/popup.png)
 
 ## Features
 
-- Bar text `5h 3% · 7d 67%` with a Nerd Font glyph, coloured by threshold (75 % / 90 % by default)
-- Hover popup: `resets in 2h 14m`, model-scoped weekly limits (e.g. `Fable: 51%`),
-  weekly usage by surface, extra-usage spend, data source and age, next check
+- Claude-styled chip: cairo-drawn starburst icon, terracotta background, cream text;
+  amber at 75 %, red at 90 % (configurable), grey when nothing works
+- `style = "bare"` for themes that colour their own segments (icon + text only)
+- Hover popup in the same palette: logo header, plan and data source, a progress bar
+  per window with `resets in 2h 14m`, model-scoped weekly limits (e.g. `Fable 51%`),
+  weekly usage by surface, extra-usage spend, next check
 - Desktop notification once per threshold crossing, re-armed after the window resets
 - Left click opens a terminal with `claude` (configurable), right click refreshes, middle click pins the popup
 - Three data sources with automatic fallback:
@@ -36,7 +41,7 @@ open Claude Code.
 - AwesomeWM 4.3 or the git version (API level 4)
 - `curl`
 - Claude Code, logged in with a claude.ai Pro or Max subscription (API-key users have no rate-limit windows)
-- A [Nerd Font](https://www.nerdfonts.com/) for the glyph, or set `glyph` to plain text
+- Any font; the icon is drawn with cairo. A Nerd Font is only needed for `icon = "glyph"`
 
 ## Installation
 
@@ -84,20 +89,27 @@ claude_usage.new({
     stale_after   = 3600,     -- cached data older than this is marked "(stale)"
 
     -- Appearance
-    font          = nil,      -- nil = beautiful.font
-    glyph         = "\u{f0e7}", -- Nerd Font bolt; try "\u{f06a9}" (robot) or "" for none
-    show_glyph    = true,
+    font          = nil,      -- nil = beautiful.font; popup fonts are derived from it
+    style         = "chip",   -- "chip": rounded terracotta pill; "bare": icon + text only
+    icon          = "starburst", -- "starburst" (drawn), "glyph" (text, needs a Nerd Font), "none"
+    icon_size     = nil,      -- px, nil = 1.35 × font size
+    glyph         = "\u{f0e7}", -- for icon = "glyph"
     separator     = " · ",
-    forced_width  = nil,      -- e.g. dpi(120) for a fixed width
+    forced_width  = nil,      -- e.g. dpi(140) for a fixed width
     thresholds    = { warn = 75, crit = 90 },
-    colors        = { normal = nil, warn = "#e5c07b", crit = "#e06c75", error = "#5c6370", stale = nil },
-                              -- nil = inherit the surrounding foreground colour
-    color_target  = "text",   -- "none": never colour the text, do it yourself via subscribe()
+    chip          = { normal = "#D97757", warn = "#E39B3A", crit = "#C8442E", error = "#4A4744",
+                      fg = "#FAF9F5", radius = 6, padding_x = 8, padding_y = 1 },
+    colors        = { normal = nil, warn = "#E39B3A", crit = "#C8442E", error = "#9C9A93",
+                      stale = nil, icon = "#D97757" },  -- text/icon colours for style = "bare"
+    color_target  = "text",   -- "none": never colour the text (style = "bare" only)
     format        = nil,      -- custom bar text, see below
 
     -- Popup
     popup         = true,     -- built-in hover popup; false to build your own
-    popup_bg = nil, popup_fg = nil, popup_border_color = nil, popup_border_width = 1,
+    popup_width   = 300,      -- dpi
+    popup_colors  = { bg = "#1F1E1D", fg = "#FAF9F5", muted = "#9C9A93", border = "#3A3835",
+                      track = "#3A3835", accent = "#D97757", warn = "#E39B3A", crit = "#C8442E" },
+    popup_border_width = 1, popup_radius = 10,
     popup_show_scoped = true, popup_show_spend = true, popup_show_breakdown = true,
 
     -- Notifications (naughty)
@@ -123,8 +135,24 @@ end
 ```
 
 `state` is described below; `fmt` is the `claude_usage.format` helper table
-(`round`, `relative`, `age`, `has_data`, `level_for`, `popup_lines`, ...).
+(`round`, `relative`, `age`, `has_data`, `level_for`, `chip_color`, `popup_lines`,
+`popup_rows`, ...).
 Return plain text; the widget escapes it for Pango.
+
+### Fitting into a themed bar
+
+With `style = "bare"` the widget draws only the icon and the text and inherits
+the foreground colour of whatever you put it in. Combine it with
+`format.chip_color(state, opts)` to paint your own segment:
+
+```lua
+local w = claude_usage.new({ style = "bare", color_target = "none", colors = { icon = "#FAF9F5" } })
+local segment = wibox.container.background(w, "#D97757")
+segment.fg = "#FAF9F5"
+claude_usage.subscribe(function(state)
+    segment.bg = claude_usage.format.chip_color(state, claude_usage.opts)
+end)
+```
 
 ### Using the model without the built-in widget or popup
 
@@ -226,7 +254,7 @@ any `claude` command and the next check succeeds.
 | `!net` | curl failed or 5xx, no cached data | check connectivity; the widget retries with backoff |
 | `!none` | every source failed | check the popup for the last error |
 | `5h --` | that window is absent from the response (e.g. no subscription) | nothing to do |
-| a box instead of the glyph | no Nerd Font | set `font` or `glyph` |
+| a box instead of the icon | `icon = "glyph"` without a Nerd Font | use `icon = "starburst"` or set `glyph` |
 
 Awesome's error output (`~/.cache/awesome/stderr.log` or the tty) shows
 `claude_usage:` warnings for misconfiguration and subscriber errors.
@@ -238,8 +266,9 @@ make test     # runs spec/ with lua5.4 and luajit in two time zones, no dependen
 make lint     # luacheck (install via luarocks)
 ```
 
-The pure modules (`normalize`, `format`, `timeparse`, `backoff`, `notify`,
-`model`) run without AwesomeWM; `widget.lua`, `popup.lua` and `init.lua` need it.
+The pure modules (`normalize`, `format`, `brand`, `timeparse`, `backoff`,
+`notify`, `model`) run without AwesomeWM; `widget.lua`, `popup.lua`, `icon.lua`
+and `init.lua` need it.
 
 ## License
 

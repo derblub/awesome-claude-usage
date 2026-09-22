@@ -69,6 +69,7 @@ local files = {
 	"spec/config_test.lua",
 	"spec/normalize_test.lua",
 	"spec/format_test.lua",
+	"spec/brand_test.lua",
 	"spec/api_test.lua",
 	"spec/notify_test.lua",
 	"spec/model_test.lua",

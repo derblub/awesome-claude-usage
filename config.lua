@@ -2,7 +2,7 @@
 
 local M = {}
 
-M.version = "0.1.0"
+M.version = "0.2.0"
 
 local home = os.getenv("HOME") or ""
 local xdg_cache = os.getenv("XDG_CACHE_HOME") or (home .. "/.cache")
@@ -25,24 +25,32 @@ M.defaults = {
 
 	-- Appearance
 	font = nil, -- nil -> beautiful.font
-	glyph = "\u{f0e7}", -- Nerd Font bolt; alternatives: "\u{f06a9}" (robot), "\u{f0a3a}" (head)
-	error_glyph = "\u{f071}", -- Nerd Font warning triangle
-	show_glyph = true,
+	style = "chip", -- "chip": orange pill with cream text; "bare": text only, colours from the theme
+	icon = "starburst", -- "starburst" (drawn), "glyph" (text), "none"
+	icon_size = nil, -- px; nil -> derived from the font size
+	glyph = "\u{f0e7}", -- used when icon = "glyph"
+	error_glyph = "\u{f071}",
+	show_glyph = true, -- only for icon = "glyph"
 	format = nil, -- fun(state, fmt) -> plain text; nil for the default "5h 3% · 7d 67%"
 	separator = " · ",
 	forced_width = nil,
 	align = "center",
 	thresholds = { warn = 75, crit = 90, spend = nil },
-	colors = { normal = nil, warn = "#e5c07b", crit = "#e06c75", error = "#5c6370", stale = nil },
-	color_target = "text", -- "text" wraps the text in a pango span; "none" leaves colors to the theme
+	-- Text colours for style = "bare" (nil = inherit the surrounding foreground)
+	colors = { normal = nil, warn = "#E39B3A", crit = "#C8442E", error = "#9C9A93", stale = nil, icon = "#D97757" },
+	color_target = "text", -- "text" wraps the text in a pango span; "none" leaves colours to the theme
+	-- Chip colours for style = "chip"
+	chip = { normal = "#D97757", warn = "#E39B3A", crit = "#C8442E", error = "#4A4744", fg = "#FAF9F5",
+		radius = 6, padding_x = 8, padding_y = 1 },
 
 	-- Popup
 	popup = true,
 	popup_placement = nil, -- fun(popup, geometry) override
-	popup_bg = nil,
-	popup_fg = nil,
-	popup_border_color = nil,
+	popup_width = 300, -- dpi
+	popup_colors = { bg = "#1F1E1D", fg = "#FAF9F5", muted = "#9C9A93", border = "#3A3835", track = "#3A3835",
+		accent = "#D97757", warn = "#E39B3A", crit = "#C8442E" },
 	popup_border_width = 1,
+	popup_radius = 10,
 	popup_show_scoped = true,
 	popup_show_spend = true,
 	popup_show_breakdown = true,
@@ -61,7 +69,7 @@ M.defaults = {
 }
 
 -- Keys whose table values are merged key by key instead of replaced.
-local deep_keys = { thresholds = true, colors = true }
+local deep_keys = { thresholds = true, colors = true, chip = true, popup_colors = true }
 
 local function copy(t)
 	local out = {}

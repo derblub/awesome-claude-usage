@@ -3,6 +3,7 @@
 local prefix = (...):match("^(.*%.)") or ""
 local timeparse = require(prefix .. "timeparse")
 local normalize = require(prefix .. "normalize")
+local brand = require(prefix .. "brand")
 
 local M = {}
 
@@ -261,6 +262,124 @@ function M.popup_lines(st, now, opts)
 		lines[#lines + 1] = "Next check in " .. (timeparse.relative(st.next_fetch_at, now) or "?")
 	end
 	return lines
+end
+
+--- Background colour of the chip (style = "chip").
+---@param st table|nil
+---@param opts table resolved options
+---@return string
+function M.chip_color(st, opts)
+	local chip = opts.chip or {}
+	if not M.has_data(st) then
+		if st and st.error then
+			return chip.error or brand.palette.error
+		end
+		return chip.normal or brand.palette.orange
+	end
+	return brand.level_color(M.state_level(st, opts.thresholds or {}), chip)
+end
+
+local SUBSCRIPTION_NAME = { max = "Max", pro = "Pro", team = "Team", enterprise = "Enterprise", free = "Free" }
+
+--- Human readable plan name.
+function M.plan_name(subscription)
+	if type(subscription) ~= "string" or subscription == "" then
+		return nil
+	end
+	return (SUBSCRIPTION_NAME[subscription:lower()] or subscription) .. " plan"
+end
+
+local function reset_text(w, now)
+	if not w or not w.resets_at then
+		return nil
+	end
+	local d = w.resets_at - now
+	if d > 8 * 86400 or d < -86400 then
+		return "resets at " .. timeparse.absolute(w.resets_at)
+	end
+	return "resets in " .. timeparse.relative(w.resets_at, now)
+end
+
+--- Structured content for the graphical popup.
+---@param st table|nil
+---@param now integer
+---@param opts table resolved options
+---@return table rows  { title, subtitle, windows = { {label, sub, percent, level, reset, active} }, spend, breakdown, footer, error, stale }
+function M.popup_rows(st, now, opts)
+	opts = opts or {}
+	local thresholds = opts.thresholds or {}
+	local rows = { title = "Claude usage", windows = {}, footer = {} }
+
+	if st == nil then
+		rows.subtitle = "Loading…"
+		return rows
+	end
+
+	local sub = {}
+	local plan = M.plan_name(st.subscription)
+	if plan then
+		sub[#sub + 1] = plan
+	end
+	if st.fetched_at then
+		local src = SOURCE_NAME[st.source] or tostring(st.source or "?")
+		sub[#sub + 1] = "via " .. src .. " " .. timeparse.age(st.fetched_at, now)
+	end
+	if st.stale then
+		sub[#sub + 1] = "stale"
+	end
+	rows.subtitle = table.concat(sub, " · ")
+	rows.stale = st.stale or false
+
+	if M.has_data(st) then
+		local function add(label, subtext, w)
+			rows.windows[#rows.windows + 1] = {
+				label = label,
+				sub = subtext,
+				percent = w and w.percent or nil,
+				level = w and M.level_for(w.percent, thresholds) or "normal",
+				reset = reset_text(w, now),
+				active = w and w.is_active or false,
+			}
+		end
+		add("Session", "5-hour window", st.five_hour)
+		add("Weekly", "7-day window", st.seven_day)
+		if opts.popup_show_scoped ~= false then
+			for _, w in ipairs(st.scoped or {}) do
+				add(w.name or "Model", "weekly, this model", w)
+			end
+		end
+		if opts.popup_show_spend ~= false and st.spend and st.spend.enabled then
+			local used = M.money(st.spend.used, st.spend.currency)
+			local limit = M.money(st.spend.limit, st.spend.currency)
+			local text = used and limit and (used .. " of " .. limit) or used or nil
+			local level = "normal"
+			if thresholds.spend and (st.spend.percent or 0) >= thresholds.spend then
+				level = "warn"
+			end
+			rows.spend = { label = "Extra usage", text = text, percent = st.spend.percent or 0, level = level }
+		end
+		if opts.popup_show_breakdown ~= false and st.breakdown then
+			local parts = {}
+			for _, r in ipairs(st.breakdown) do
+				if r.percent > 0 then
+					parts[#parts + 1] = string.format("%s %d%%", r.name, M.round(r.percent))
+				end
+			end
+			if #parts > 0 then
+				rows.breakdown = table.concat(parts, " · ")
+			end
+		end
+	else
+		rows.empty = "No usage data"
+	end
+
+	if st.error then
+		rows.error = M.error_text(st.error, now)
+	end
+	if st.next_fetch_at then
+		rows.footer[#rows.footer + 1] = "next check in " .. (timeparse.relative(st.next_fetch_at, now) or "?")
+	end
+	return rows
 end
 
 return M

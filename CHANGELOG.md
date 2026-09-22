@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-22
+
+### Added
+- Claude-styled look: cairo-drawn starburst icon, chip style with terracotta/amber/red background,
+  cream text; `style = "bare"` for themed bars plus `format.chip_color()`.
+- Graphical popup: logo header with plan and data source, one progress bar per usage window,
+  reset times, scoped model limits, extra usage, weekly breakdown and footer.
+- New options `style`, `icon`, `icon_size`, `chip`, `popup_width`, `popup_colors`, `popup_radius`;
+  `format.popup_rows()` and `format.plan_name()`.
+
+### Changed
+- Default warn/crit text colours now use the Claude palette (`#E39B3A`, `#C8442E`).
+
 ## [0.1.0] - 2026-09-22
 
 ### Added

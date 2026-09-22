@@ -1,7 +1,9 @@
 LUA ?= lua5.4
 LUAJIT ?= luajit
 
-.PHONY: test test-lua test-jit lint check
+.PHONY: all test test-lua test-jit lint check
+
+all: check
 
 test: test-lua test-jit
 

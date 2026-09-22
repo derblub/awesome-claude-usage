@@ -1,12 +1,15 @@
--- widget.lua - the wibar widget: textbox, colours, mouse buttons, popup (awesome only).
+-- widget.lua - the wibar widget: icon, text, chip background, mouse buttons, popup (awesome only).
 
 local awful = require("awful")
 local wibox = require("wibox")
 local gears = require("gears")
 local beautiful = require("beautiful")
+local dpi = beautiful.xresources.apply_dpi
 
 local prefix = (...):match("^(.*%.)") or ""
 local format = require(prefix .. "format")
+local brand = require(prefix .. "brand")
+local icon = require(prefix .. "icon")
 local popup = require(prefix .. "popup")
 
 local M = {}
@@ -14,29 +17,82 @@ local M = {}
 --- Create the widget.
 ---@param model table usage model (already set up)
 ---@param opts table resolved options
----@return table widget  a wibox.container.background holding the textbox; fields .textbox, .model, .popup
+---@return table widget  wibox.container.background; fields .textbox, .icon, .model, .popup
 function M.new(model, opts)
+	local font = opts.font or beautiful.font
+	local _, font_size = brand.font_parts(font)
+	local chip = opts.style == "chip"
+
 	local textbox = wibox.widget({
 		widget = wibox.widget.textbox,
-		font = opts.font or beautiful.font,
+		font = font,
 		align = opts.align or "center",
 		valign = "center",
-		forced_width = opts.forced_width,
 	})
 
-	local container = wibox.widget({
-		textbox,
-		widget = wibox.container.background,
+	local row = wibox.widget({
+		layout = wibox.layout.fixed.horizontal,
+		spacing = dpi(5),
 	})
+
+	local icon_widget = nil
+	if opts.icon == "starburst" then
+		icon_widget = icon.starburst({
+			size = opts.icon_size or dpi(math.floor(font_size * 1.35 + 0.5)),
+			color = chip and opts.chip.fg or (opts.colors.icon or brand.palette.orange),
+		})
+		row:add(wibox.container.place(icon_widget, "center", "center"))
+	end
+	row:add(textbox)
+
+	local inner = row
+	if opts.forced_width then
+		inner = wibox.widget({
+			row,
+			halign = opts.align or "center",
+			forced_width = opts.forced_width,
+			widget = wibox.container.place,
+		})
+	end
+
+	local container
+	if chip then
+		local radius = dpi(opts.chip.radius or 6)
+		container = wibox.widget({
+			{
+				inner,
+				left = dpi(opts.chip.padding_x or 8),
+				right = dpi(opts.chip.padding_x or 8),
+				top = dpi(opts.chip.padding_y or 1),
+				bottom = dpi(opts.chip.padding_y or 1),
+				widget = wibox.container.margin,
+			},
+			bg = opts.chip.normal,
+			fg = opts.chip.fg,
+			shape = function(cr, w, h)
+				gears.shape.rounded_rect(cr, w, h, radius)
+			end,
+			widget = wibox.container.background,
+		})
+	else
+		container = wibox.widget({
+			inner,
+			widget = wibox.container.background,
+		})
+	end
+
+	-- The glyph is only part of the text when no drawn icon is present.
+	local text_opts = setmetatable({ show_glyph = opts.icon == "glyph" and opts.show_glyph }, { __index = opts })
 
 	local function render(state)
-		local text = gears.string.xml_escape(format.bar_text(state, opts))
-		local color = nil
-		if opts.color_target ~= "none" then
-			color = format.color_for(state, opts)
-		end
-		if color then
-			text = string.format('<span foreground="%s">%s</span>', color, text)
+		local text = gears.string.xml_escape(format.bar_text(state, text_opts))
+		if chip then
+			container.bg = format.chip_color(state, opts)
+		elseif opts.color_target ~= "none" then
+			local color = format.color_for(state, opts)
+			if color then
+				text = string.format('<span foreground="%s">%s</span>', color, text)
+			end
 		end
 		textbox:set_markup(text)
 	end
@@ -81,6 +137,7 @@ function M.new(model, opts)
 	}
 
 	container.textbox = textbox
+	container.icon = icon_widget
 	container.model = model
 	container.popup = popup_handle
 	return container
