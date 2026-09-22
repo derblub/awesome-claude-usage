@@ -1,0 +1,266 @@
+-- format.lua - text and colour helpers for the bar and the popup (pure Lua).
+
+local prefix = (...):match("^(.*%.)") or ""
+local timeparse = require(prefix .. "timeparse")
+local normalize = require(prefix .. "normalize")
+
+local M = {}
+
+M.relative = timeparse.relative
+M.age = timeparse.age
+M.absolute = timeparse.absolute
+M.has_data = normalize.has_data
+
+local LEVEL_RANK = { normal = 0, warn = 1, crit = 2 }
+M.LEVEL_RANK = LEVEL_RANK
+
+--- Round half up to an integer.
+function M.round(x)
+	return math.floor(x + 0.5)
+end
+
+--- Threshold level for a percentage.
+---@param pct number|nil
+---@param thresholds { warn: number, crit: number }
+---@return "normal"|"warn"|"crit"
+function M.level_for(pct, thresholds)
+	if type(pct) ~= "number" then
+		return "normal"
+	end
+	if pct >= (thresholds.crit or 90) then
+		return "crit"
+	elseif pct >= (thresholds.warn or 75) then
+		return "warn"
+	end
+	return "normal"
+end
+
+--- Highest percentage over all usage windows (spend excluded).
+---@param st table|nil
+---@return number|nil
+function M.max_percent(st)
+	if type(st) ~= "table" then
+		return nil
+	end
+	local best = nil
+	local function consider(w)
+		if type(w) == "table" and type(w.percent) == "number" and (best == nil or w.percent > best) then
+			best = w.percent
+		end
+	end
+	consider(st.five_hour)
+	consider(st.seven_day)
+	for _, w in ipairs(st.scoped or {}) do
+		consider(w)
+	end
+	return best
+end
+
+--- Overall level of a state.
+function M.state_level(st, thresholds)
+	return M.level_for(M.max_percent(st), thresholds)
+end
+
+--- Colour for the bar text, or nil to inherit the container's foreground.
+--- Precedence: error without data > crit > warn > stale > normal.
+---@param st table|nil
+---@param opts table resolved options
+---@return string|nil
+function M.color_for(st, opts)
+	local colors = opts.colors or {}
+	if not M.has_data(st) then
+		if st and st.error then
+			return colors.error
+		end
+		return colors.normal
+	end
+	local level = M.state_level(st, opts.thresholds or {})
+	if level == "crit" then
+		return colors.crit
+	elseif level == "warn" then
+		return colors.warn
+	elseif st.stale and colors.stale then
+		return colors.stale
+	end
+	return colors.normal
+end
+
+local SHORT_ERROR = {
+	unauthorized = "!auth",
+	no_credentials = "!cred",
+	rate_limited = "!429",
+	network = "!net",
+	parse = "!parse",
+	no_source = "!none",
+}
+
+--- Short bar label for an error code.
+function M.short_error(code)
+	return SHORT_ERROR[code] or "!err"
+end
+
+local function pct_text(w)
+	if type(w) == "table" and type(w.percent) == "number" then
+		return string.format("%d%%", M.round(w.percent))
+	end
+	return "--"
+end
+
+--- Plain text for the bar (no markup; the widget escapes it).
+---@param st table|nil
+---@param opts table resolved options
+---@return string
+function M.bar_text(st, opts)
+	if type(opts.format) == "function" then
+		local ok, text = pcall(opts.format, st, M)
+		if ok and type(text) == "string" then
+			return text
+		end
+	end
+	local glyph = opts.show_glyph and (opts.glyph .. " ") or ""
+	if st == nil then
+		return glyph .. "…"
+	end
+	if not M.has_data(st) then
+		local eg = opts.show_glyph and (opts.error_glyph .. " ") or ""
+		if st.error then
+			return eg .. M.short_error(st.error.code)
+		end
+		return glyph .. "--"
+	end
+	return glyph .. "5h " .. pct_text(st.five_hour) .. (opts.separator or " · ") .. "7d " .. pct_text(st.seven_day)
+end
+
+--- Human readable money amount.
+function M.money(amount, currency)
+	if type(amount) ~= "number" then
+		return nil
+	end
+	currency = currency or "USD"
+	if currency == "USD" then
+		return string.format("$%.2f", amount)
+	elseif currency == "EUR" then
+		return string.format("%.2f €", amount)
+	end
+	return string.format("%.2f %s", amount, currency)
+end
+
+local SOURCE_NAME = { api = "API", statusline = "statusLine cache", claude_json = "~/.claude.json cache" }
+
+--- Human readable error message for the popup.
+function M.error_text(err, now)
+	if type(err) ~= "table" then
+		return nil
+	end
+	local code = err.code
+	if code == "unauthorized" then
+		return "Token expired or rejected – run any `claude` command to refresh"
+	elseif code == "no_credentials" then
+		return "No Claude Code credentials found – log in with `claude`"
+	elseif code == "rate_limited" then
+		local rem = err.retry_at and timeparse.relative(err.retry_at, now)
+		return "Rate limited (429)" .. (rem and (", retry in " .. rem) or "")
+	elseif code == "network" then
+		return "Network error" .. (err.message and (": " .. err.message) or "")
+	elseif code == "parse" then
+		return "Unexpected response" .. (err.message and (": " .. err.message) or "")
+	elseif code == "no_source" then
+		return "No data source available"
+	end
+	return err.message or tostring(code)
+end
+
+local function window_line(label, w, now)
+	if not w then
+		return nil
+	end
+	local parts = { string.format("%s: %d%%", label, M.round(w.percent)) }
+	if w.resets_at then
+		local d = w.resets_at - now
+		if d > 8 * 86400 or d < -86400 then
+			parts[#parts + 1] = "resets at " .. timeparse.absolute(w.resets_at)
+		else
+			parts[#parts + 1] = "resets in " .. timeparse.relative(w.resets_at, now)
+		end
+	end
+	local line = table.concat(parts, " – ")
+	if w.is_active then
+		line = line .. " *"
+	end
+	return line
+end
+
+--- Lines for the details popup. The first line is the title.
+---@param st table|nil
+---@param now integer
+---@param opts table|nil resolved options
+---@return string[]
+function M.popup_lines(st, now, opts)
+	opts = opts or {}
+	local lines = {}
+	local title = "Claude usage"
+	if st and st.subscription then
+		title = title .. " (" .. tostring(st.subscription) .. ")"
+	end
+	lines[#lines + 1] = title
+
+	if st == nil then
+		lines[#lines + 1] = "Loading…"
+		return lines
+	end
+
+	if M.has_data(st) then
+		lines[#lines + 1] = window_line("Session (5h)", st.five_hour, now) or "Session (5h): --"
+		lines[#lines + 1] = window_line("Weekly (7d)", st.seven_day, now) or "Weekly (7d): --"
+		if opts.popup_show_scoped ~= false then
+			for _, w in ipairs(st.scoped or {}) do
+				lines[#lines + 1] = "  " .. window_line(w.name or "Model", w, now)
+			end
+		end
+		if opts.popup_show_breakdown ~= false and st.breakdown then
+			local parts = {}
+			for _, r in ipairs(st.breakdown) do
+				if r.percent > 0 then
+					parts[#parts + 1] = string.format("%s %d%%", r.name, M.round(r.percent))
+				end
+			end
+			if #parts > 0 then
+				lines[#lines + 1] = "Weekly by surface: " .. table.concat(parts, ", ")
+			end
+		end
+		if opts.popup_show_spend ~= false and st.spend and st.spend.enabled then
+			local used = M.money(st.spend.used, st.spend.currency)
+			local limit = M.money(st.spend.limit, st.spend.currency)
+			local text = "Extra usage: "
+			if used and limit then
+				text = text .. used .. " / " .. limit
+			elseif used then
+				text = text .. used
+			end
+			text = text .. string.format(" (%d%%)", M.round(st.spend.percent or 0))
+			lines[#lines + 1] = text
+		end
+	else
+		lines[#lines + 1] = "No usage data"
+	end
+
+	lines[#lines + 1] = ""
+	if st.fetched_at then
+		local src = SOURCE_NAME[st.source] or tostring(st.source or "unknown")
+		local line = "via " .. src .. ", " .. timeparse.age(st.fetched_at, now)
+		if st.stale then
+			line = line .. " (stale)"
+		end
+		lines[#lines + 1] = line
+	end
+	if st.error then
+		local prefix_text = M.has_data(st) and "Last check failed: " or ""
+		lines[#lines + 1] = prefix_text .. (M.error_text(st.error, now) or "error")
+	end
+	if st.next_fetch_at then
+		lines[#lines + 1] = "Next check in " .. (timeparse.relative(st.next_fetch_at, now) or "?")
+	end
+	return lines
+end
+
+return M
