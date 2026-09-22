@@ -65,6 +65,19 @@ function Notifier:check_window(key, label, w, now)
 	self.windows[key] = stored
 end
 
+--- Announce session transitions (see sessions.diff).
+---@param events table
+function Notifier:sessions(events)
+	for _, ev in ipairs(events or {}) do
+		local name = ev.session and (ev.session.name or ("pid " .. tostring(ev.session.pid))) or "a session"
+		if ev.kind == "attention" and self.opts.notify_attention then
+			self:emit({ title = "Claude Code", message = name .. " needs your attention", urgency = "normal" })
+		elseif ev.kind == "finished" and self.opts.notify_finished then
+			self:emit({ title = "Claude Code", message = name .. " finished", urgency = "low" })
+		end
+	end
+end
+
 --- Feed a new state. Safe to call repeatedly with the same data.
 ---@param st table|nil
 ---@param now integer

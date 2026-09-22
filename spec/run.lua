@@ -66,6 +66,8 @@ end
 local files = {
 	"spec/timeparse_test.lua",
 	"spec/backoff_test.lua",
+	"spec/history_test.lua",
+	"spec/sessions_test.lua",
 	"spec/config_test.lua",
 	"spec/normalize_test.lua",
 	"spec/format_test.lua",

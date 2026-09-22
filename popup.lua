@@ -10,6 +10,8 @@ local prefix = (...):match("^(.*%.)") or ""
 local format = require(prefix .. "format")
 local brand = require(prefix .. "brand")
 local icon = require(prefix .. "icon")
+local bar = require(prefix .. "bar")
+local history = require(prefix .. "history")
 
 local M = {}
 
@@ -25,7 +27,7 @@ end
 ---@param rows table from format.popup_rows
 ---@param opts table resolved options
 ---@return table widget
-function M.build(rows, opts)
+function M.build(rows, opts, samples)
 	local c = opts.popup_colors
 	local base_font = opts.font or beautiful.font
 	local _, size = brand.font_parts(base_font)
@@ -72,7 +74,10 @@ function M.build(rows, opts)
 	}))
 
 	-- Usage windows
-	local function bar_row(label, subtext, percent, level, right_text, note)
+	local now = os.time()
+	local spark_from = now - (opts.sparkline_hours or 24) * 3600
+	local function bar_row(label, subtext, percent, level, right_text, note, extra)
+		extra = extra or {}
 		local color = level_color(level)
 		local pct_markup = percent and span(string.format("%d%%", format.round(percent)), color, ' font_weight="bold"')
 			or span("--", c.muted)
@@ -87,23 +92,41 @@ function M.build(rows, opts)
 			textbox(right_text or pct_markup, f_pct, "right"),
 			layout = wibox.layout.align.horizontal,
 		})
-		local bar = wibox.widget({
-			max_value = 100,
-			value = math.min(percent or 0, 100),
-			forced_height = dpi(6),
-			shape = gears.shape.rounded_bar,
-			bar_shape = gears.shape.rounded_bar,
-			background_color = c.track,
+		local progress = bar.bar({
+			value = percent or 0,
 			color = color,
-			widget = wibox.widget.progressbar,
+			track = c.track,
+			marker = extra.pace,
+			marker_color = c.muted,
+			height = dpi(6),
 		})
 		local row = wibox.widget({
 			head,
-			bar,
-			note and textbox(span(note, c.muted), f_small) or nil,
+			progress,
 			layout = wibox.layout.fixed.vertical,
 			spacing = dpi(4),
 		})
+		local notes = {}
+		if note then
+			notes[#notes + 1] = span(note, c.muted)
+		end
+		if extra.forecast then
+			local fcolor = extra.forecast_level == "normal" and c.muted or level_color(extra.forecast_level)
+			notes[#notes + 1] = span(extra.forecast, fcolor)
+		end
+		if #notes > 0 then
+			row:add(textbox(table.concat(notes, span(" · ", c.muted)), f_small))
+		end
+		if extra.series and #extra.series >= 2 then
+			row:add(bar.sparkline({
+				points = extra.series,
+				from = spark_from,
+				to = now,
+				color = color,
+				track = c.track,
+				height = dpi(16),
+			}))
+		end
 		return row
 	end
 
@@ -117,13 +140,25 @@ function M.build(rows, opts)
 		elseif w.active then
 			note = "active limit"
 		end
-		body:add(bar_row(w.label, w.sub, w.percent, w.level, nil, note))
+		local series = (samples and w.key) and history.series(samples, w.key, spark_from) or nil
+		body:add(bar_row(w.label, w.sub, w.percent, w.level, nil, note, {
+			pace = w.pace,
+			forecast = w.forecast,
+			forecast_level = w.forecast_level,
+			series = series,
+		}))
 	end
 	if rows.spend then
 		body:add(bar_row(rows.spend.label, nil, rows.spend.percent, rows.spend.level, nil, rows.spend.text))
 	end
 	if rows.breakdown then
 		body:add(textbox(span("This week: " .. rows.breakdown, c.muted), f_small))
+	end
+
+	-- Sessions
+	if rows.sessions and rows.sessions.text then
+		local color = rows.sessions.attention > 0 and c.warn or c.muted
+		body:add(textbox(span(rows.sessions.text, color), f_small))
 	end
 
 	-- Footer
@@ -189,7 +224,8 @@ function M.attach(widget, model, opts)
 
 	local function fill(state)
 		local p = ensure_popup()
-		local ok, content = pcall(M.build, format.popup_rows(state, os.time(), opts), opts)
+		local samples = model.samples and model.samples() or nil
+		local ok, content = pcall(M.build, format.popup_rows(state, os.time(), opts), opts, samples)
 		if ok then
 			p.widget = content
 		else

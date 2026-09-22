@@ -2,7 +2,7 @@
 
 local M = {}
 
-M.version = "0.3.0"
+M.version = "0.4.0"
 
 local home = os.getenv("HOME") or ""
 local xdg_cache = os.getenv("XDG_CACHE_HOME") or (home .. "/.cache")
@@ -21,7 +21,23 @@ M.defaults = {
 	claude_json_path = home .. "/.claude.json",
 	cache_path = xdg_cache .. "/claude-usage/rate_limits.json",
 	stale_after = 3600, -- data older than this is flagged as stale
+	fresh_cache_max_age = 120, -- a statusLine cache younger than this replaces an API call
 	curl_cmd = "curl",
+
+	-- Sessions (~/.claude/sessions) and adaptive polling
+	sessions = true, -- watch running Claude Code sessions
+	sessions_dir = home .. "/.claude/sessions",
+	sessions_interval = 10, -- seconds between directory scans (local files only)
+	interval_idle = 900, -- fetch interval while no session is working
+	sessions_in_bar = true, -- append a flag to the bar text when a session needs attention
+	attention_flag = " \u{2691}", -- U+2691 black flag
+	notify_attention = true, -- a session waits for a permission or an answer
+	notify_finished = false, -- a session went from working to idle
+
+	-- History and forecast
+	history = true, -- record samples and show burn rate / forecast / pacing
+	history_path = xdg_cache .. "/claude-usage/history.csv",
+	sparkline_hours = 24, -- popup sparkline range
 
 	-- Appearance
 	font = nil, -- nil -> beautiful.font

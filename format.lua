@@ -129,7 +129,60 @@ function M.bar_text(st, opts)
 		end
 		return glyph .. "--"
 	end
-	return glyph .. "5h " .. pct_text(st.five_hour) .. (opts.separator or " · ") .. "7d " .. pct_text(st.seven_day)
+	local text = glyph .. "5h " .. pct_text(st.five_hour) .. (opts.separator or " · ") .. "7d " .. pct_text(st.seven_day)
+	if opts.sessions_in_bar and st.sessions and (st.sessions.attention or 0) > 0 then
+		text = text .. (opts.attention_flag or " !")
+	end
+	return text
+end
+
+--- Text and level for a forecast (see history.forecast).
+---@param fc table|nil
+---@param now integer
+---@return string|nil text
+---@return string level "normal"|"warn"|"crit"
+function M.forecast_text(fc, now)
+	if type(fc) ~= "table" then
+		return nil, "normal"
+	end
+	if fc.exhaust_at then
+		local left = fc.exhaust_at - now
+		local level = left < 3600 and "crit" or "warn"
+		return "at this pace empty in " .. (timeparse.relative(fc.exhaust_at, now) or "?"), level
+	end
+	if fc.at_reset then
+		if fc.rate == 0 then
+			return "no usage lately", "normal"
+		end
+		return string.format("at this pace ~%d%% at reset", M.round(fc.at_reset)), "normal"
+	end
+	if fc.rate and fc.rate > 0 then
+		return string.format("+%.1f%%/h", fc.rate * 3600), "normal"
+	end
+	return nil, "normal"
+end
+
+--- One line describing the running Claude Code sessions.
+---@param sessions table|nil summary from sessions.read
+---@return string|nil
+function M.sessions_text(sessions)
+	if type(sessions) ~= "table" then
+		return nil
+	end
+	if sessions.total == 0 then
+		return "no Claude Code session running"
+	end
+	local parts = {}
+	if sessions.attention > 0 then
+		parts[#parts + 1] = sessions.attention .. " need" .. (sessions.attention == 1 and "s" or "") .. " your attention"
+	end
+	if sessions.working > 0 then
+		parts[#parts + 1] = sessions.working .. " working"
+	end
+	if sessions.idle > 0 then
+		parts[#parts + 1] = sessions.idle .. " idle"
+	end
+	return string.format("%d session%s: %s", sessions.total, sessions.total == 1 and "" or "s", table.concat(parts, ", "))
 end
 
 --- Human readable money amount.
@@ -180,6 +233,8 @@ local function window_line(label, w, now)
 		local d = w.resets_at - now
 		if d > 8 * 86400 or d < -86400 then
 			parts[#parts + 1] = "resets at " .. timeparse.absolute(w.resets_at)
+		elseif d < 0 then
+			parts[#parts + 1] = "reset due"
 		else
 			parts[#parts + 1] = "resets in " .. timeparse.relative(w.resets_at, now)
 		end
@@ -211,8 +266,17 @@ function M.popup_lines(st, now, opts)
 	end
 
 	if M.has_data(st) then
+		local fcs = st.forecast or {}
+		local function add_forecast(fc)
+			local text = M.forecast_text(fc, now)
+			if text then
+				lines[#lines + 1] = "    " .. text
+			end
+		end
 		lines[#lines + 1] = window_line("Session (5h)", st.five_hour, now) or "Session (5h): --"
+		add_forecast(fcs.five_hour)
 		lines[#lines + 1] = window_line("Weekly (7d)", st.seven_day, now) or "Weekly (7d): --"
+		add_forecast(fcs.seven_day)
 		if opts.popup_show_scoped ~= false then
 			for _, w in ipairs(st.scoped or {}) do
 				lines[#lines + 1] = "  " .. window_line(w.name or "Model", w, now)
@@ -245,6 +309,10 @@ function M.popup_lines(st, now, opts)
 		lines[#lines + 1] = "No usage data"
 	end
 
+	local sessions_line = M.sessions_text(st.sessions)
+	if sessions_line then
+		lines[#lines + 1] = sessions_line
+	end
 	lines[#lines + 1] = ""
 	if st.fetched_at then
 		local src = SOURCE_NAME[st.source] or tostring(st.source or "unknown")
@@ -296,6 +364,8 @@ local function reset_text(w, now)
 	local d = w.resets_at - now
 	if d > 8 * 86400 or d < -86400 then
 		return "resets at " .. timeparse.absolute(w.resets_at)
+	elseif d < 0 then
+		return "reset due"
 	end
 	return "resets in " .. timeparse.relative(w.resets_at, now)
 end
@@ -331,21 +401,29 @@ function M.popup_rows(st, now, opts)
 	rows.stale = st.stale or false
 
 	if M.has_data(st) then
-		local function add(label, subtext, w)
+		local fcs = st.forecast or {}
+		local paces = st.pace or {}
+		local function add(key, label, subtext, w, fc, pace)
+			local ftext, flevel = M.forecast_text(fc, now)
 			rows.windows[#rows.windows + 1] = {
+				key = key,
 				label = label,
 				sub = subtext,
 				percent = w and w.percent or nil,
 				level = w and M.level_for(w.percent, thresholds) or "normal",
 				reset = reset_text(w, now),
 				active = w and w.is_active or false,
+				forecast = ftext,
+				forecast_level = flevel,
+				pace = pace,
 			}
 		end
-		add("Session", "5-hour window", st.five_hour)
-		add("Weekly", "7-day window", st.seven_day)
+		add("five_hour", "Session", "5-hour window", st.five_hour, fcs.five_hour, paces.five_hour)
+		add("seven_day", "Weekly", "7-day window", st.seven_day, fcs.seven_day, paces.seven_day)
 		if opts.popup_show_scoped ~= false then
 			for _, w in ipairs(st.scoped or {}) do
-				add(w.name or "Model", "weekly, this model", w)
+				local name = w.name or "Model"
+				add("scoped:" .. name, name, "weekly, this model", w, (fcs.scoped or {})[name], nil)
 			end
 		end
 		if opts.popup_show_spend ~= false and st.spend and st.spend.enabled then
@@ -373,6 +451,13 @@ function M.popup_rows(st, now, opts)
 		rows.empty = "No usage data"
 	end
 
+	if st.sessions then
+		rows.sessions = {
+			text = M.sessions_text(st.sessions),
+			attention = st.sessions.attention or 0,
+			list = st.sessions.list,
+		}
+	end
 	if st.error then
 		rows.error = M.error_text(st.error, now)
 	end

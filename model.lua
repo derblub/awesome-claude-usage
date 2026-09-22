@@ -15,6 +15,8 @@ local credentials = require(prefix .. "source.credentials")
 local api = require(prefix .. "source.api")
 local statusline_cache = require(prefix .. "source.statusline_cache")
 local claude_json = require(prefix .. "source.claude_json")
+local history = require(prefix .. "history")
+local sessions_mod = require(prefix .. "sessions")
 
 local M = {}
 
@@ -26,6 +28,10 @@ local _inflight = false
 local _setup = false
 local _last_good = nil
 local _creds = nil
+local _samples = nil -- history samples (nil when history is off)
+local _sessions = nil -- last sessions summary
+local _sessions_timer = nil
+local _next_fetch_at = nil
 
 local REDRAW_INTERVAL = 60
 
@@ -86,6 +92,49 @@ local function schedule_next(delay)
 	return d
 end
 
+--- Fetch interval depending on whether a session is working.
+local function current_interval()
+	if _opts.sessions and _sessions and (_sessions.working or 0) == 0 then
+		return math.max(_opts.interval_idle or _opts.interval, _opts.interval)
+	end
+	return _opts.interval
+end
+
+--- Attach forecast, pacing and session info to a state.
+local function attach_analysis(st, t)
+	st.sessions = _sessions
+	if not _samples then
+		return
+	end
+	st.forecast = { scoped = {} }
+	st.pace = {}
+	local function analyse(key, w, lookback)
+		if not w then
+			return nil
+		end
+		local rate = history.rate(_samples, key, t, lookback, w.resets_at)
+		return history.forecast(w, rate, t)
+	end
+	st.forecast.five_hour = analyse("five_hour", st.five_hour, history.LOOKBACK.five_hour)
+	st.forecast.seven_day = analyse("seven_day", st.seven_day, history.LOOKBACK.seven_day)
+	for _, w in ipairs(st.scoped or {}) do
+		if w.name then
+			st.forecast.scoped[w.name] = analyse("scoped:" .. w.name:gsub(",", " "), w, history.LOOKBACK.scoped)
+		end
+	end
+	st.pace.five_hour = history.pace(st.five_hour, 5 * 3600, t)
+	st.pace.seven_day = history.pace(st.seven_day, 7 * 86400, t)
+end
+
+local function record(st, t)
+	if _samples and (st.source == "api" or st.source == "statusline") and not is_stale(st, t) then
+		local last = _samples[#_samples]
+		if not last or t - last.t >= 30 then
+			history.append(_opts.history_path, _samples, st, t)
+		end
+	end
+end
+
 local function finalize(st, delay, err)
 	_inflight = false
 	local t = now()
@@ -93,8 +142,11 @@ local function finalize(st, delay, err)
 	st.error = err
 	st.stale = is_stale(st, t)
 	st.subscription = (_creds and _creds.subscription) or (M.state and M.state.subscription) or nil
-	local d = schedule_next(delay or _opts.interval)
-	st.next_fetch_at = t + d
+	record(st, t)
+	attach_analysis(st, t)
+	local d = schedule_next(delay or current_interval())
+	_next_fetch_at = t + d
+	st.next_fetch_at = _next_fetch_at
 	if normalize.has_data(st) then
 		_last_good = st
 	end
@@ -130,6 +182,23 @@ local function fetch_api(i, err, delay)
 		err = err or { code = "rate_limited", message = "backing off", retry_at = _backoff.until_at, at = t }
 		return try_source(i + 1, err, math.max(_backoff:remaining(t), 30))
 	end
+	-- A fresh statusLine cache makes the network call unnecessary.
+	local uses_cache = false
+	for _, name in ipairs(_opts.sources) do
+		if name == "statusline" then
+			uses_cache = true
+		end
+	end
+	if uses_cache and (_opts.fresh_cache_max_age or 0) > 0 then
+		local raw = statusline_cache.read(_opts.cache_path)
+		if raw and tonumber(raw.ts) and t - tonumber(raw.ts) <= _opts.fresh_cache_max_age then
+			local st = normalize.from_statusline(raw, t)
+			if normalize.has_data(st) then
+				st.source = "statusline"
+				return finalize(st, delay, err)
+			end
+		end
+	end
 	local creds, cerr = credentials.read(_opts.credentials_path, t)
 	if not creds then
 		return try_source(i + 1, cerr, delay)
@@ -141,7 +210,7 @@ local function fetch_api(i, err, delay)
 			_backoff:reset()
 			local st = normalize.from_api(res, t2)
 			st.source = "api"
-			return finalize(st, _opts.interval, nil)
+			return finalize(st, nil, nil)
 		end
 		local d = delay
 		if res.code == "rate_limited" or res.code == "network" then
@@ -188,6 +257,7 @@ local function prime_from_cache()
 			if st and normalize.has_data(st) then
 				st.source = name
 				st.stale = is_stale(st, t)
+				attach_analysis(st, t)
 				st.next_fetch_at = t + (_opts.initial_delay or 0)
 				_last_good = st
 				set_state(st)
@@ -202,8 +272,62 @@ local function redraw()
 		return
 	end
 	local st = shallow_copy(M.state)
-	st.stale = is_stale(st, now())
+	local t = now()
+	st.stale = is_stale(st, t)
+	attach_analysis(st, t)
 	set_state(st)
+end
+
+--- Scan the sessions directory; re-emit the state when something changed.
+local function poll_sessions()
+	local t = now()
+	local ok, summary = pcall(sessions_mod.read, _opts.sessions_dir, t, _deps.sessions)
+	if not ok then
+		warn("sessions scan failed: " .. tostring(summary))
+		return
+	end
+	local prev = _sessions
+	_sessions = summary
+	local changed = not prev
+		or prev.total ~= summary.total
+		or prev.working ~= summary.working
+		or prev.idle ~= summary.idle
+		or prev.attention ~= summary.attention
+	if not changed then
+		for i, s in ipairs(summary.list) do
+			local p = prev.list[i]
+			if not p or p.pid ~= s.pid or p.status ~= s.status then
+				changed = true
+				break
+			end
+		end
+	end
+	if not changed then
+		return
+	end
+	if prev and _notifier then
+		pcall(_notifier.sessions, _notifier, sessions_mod.diff(prev, summary))
+	end
+	-- Work just stopped or started: fetch soon so the numbers follow.
+	if prev and not _inflight and not _backoff:blocked(t) and _timer then
+		local was_working = (prev.working or 0) > 0
+		local is_working = (summary.working or 0) > 0
+		if was_working ~= is_working then
+			local soon = t + (is_working and 60 or 45)
+			if not _next_fetch_at or _next_fetch_at > soon then
+				_timer:stop()
+				_timer.timeout = soon - t
+				_timer:again()
+				_next_fetch_at = soon
+			end
+		end
+	end
+	if M.state and not _inflight then
+		local st = shallow_copy(M.state)
+		st.sessions = summary
+		st.next_fetch_at = _next_fetch_at or st.next_fetch_at
+		set_state(st)
+	end
 end
 
 --- Start monitoring. Idempotent.
@@ -220,6 +344,17 @@ function M.setup(opts, deps)
 	_notifier = notify_mod.new(opts, deps)
 	math.randomseed(os.time() + math.floor((os.clock() * 1000) % 1000))
 
+	if opts.history then
+		local ok, samples = pcall(history.load, opts.history_path)
+		_samples = ok and samples or {}
+		if not ok then
+			warn("cannot read history: " .. tostring(samples))
+		end
+	end
+	if opts.sessions then
+		poll_sessions()
+	end
+
 	prime_from_cache()
 
 	_timer = deps.timer({
@@ -234,6 +369,14 @@ function M.setup(opts, deps)
 		autostart = true,
 		callback = redraw,
 	})
+	if opts.sessions then
+		_sessions_timer = deps.timer({
+			timeout = opts.sessions_interval or 10,
+			single_shot = false,
+			autostart = true,
+			callback = poll_sessions,
+		})
+	end
 end
 
 --- Subscribe to state updates. Calls fn immediately when a state exists.
@@ -288,6 +431,13 @@ function M.stop()
 		_redraw_timer:stop()
 		_redraw_timer = nil
 	end
+	if _sessions_timer then
+		_sessions_timer:stop()
+		_sessions_timer = nil
+	end
+	_samples = nil
+	_sessions = nil
+	_next_fetch_at = nil
 	_subs = {}
 	_inflight = false
 	_setup = false
@@ -300,6 +450,16 @@ end
 --- Internal: expose the backoff for the popup ("retry in …").
 function M.backoff()
 	return _backoff
+end
+
+--- History samples (empty when history is off).
+function M.samples()
+	return _samples or {}
+end
+
+--- Last sessions summary.
+function M.sessions()
+	return _sessions
 end
 
 return M

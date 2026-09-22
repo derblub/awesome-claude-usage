@@ -32,6 +32,7 @@ click opens Claude Code.
 [Installation](#installation) ·
 [Configuration](#configuration) ·
 [statusLine helper](#the-statusline-helper-fresh-data-without-network-calls) ·
+[CLI](#cli-waybar-polybar-tmux) ·
 [How it works](#how-polling-and-rate-limiting-work) ·
 [Security](#security) ·
 [Troubleshooting](#troubleshooting) ·
@@ -45,7 +46,14 @@ click opens Claude Code.
 - Hover popup in the same palette: logo header, plan and data source, a progress bar
   per window with `resets in 2h 14m`, model-scoped weekly limits (e.g. `Fable 51%`),
   weekly usage by surface, extra-usage spend, next check
+- Forecast from your own usage history: "at this pace ~38% at reset" or "empty in 1h 20m",
+  a pacing marker on the weekly bar and a 24-hour sparkline per window
+- Running Claude Code sessions: how many work, idle or wait for you; a flag in the bar and a
+  notification when one needs your attention
+- Adaptive polling: every 5 minutes while a session works, every 15 minutes otherwise, and a
+  fresh statusLine cache skips the network call entirely
 - Desktop notification once per threshold crossing, re-armed after the window resets
+- `cli.lua` prints the same data for waybar, polybar, tmux or your prompt
 - Left click opens a terminal with `claude` (configurable), right click refreshes, middle click pins the popup
 - Three data sources with automatic fallback:
   1. Claude Code's OAuth usage endpoint (`api.anthropic.com/api/oauth/usage`), polled every 5 minutes
@@ -111,6 +119,21 @@ claude_usage.new({
     claude_json_path = os.getenv("HOME") .. "/.claude.json",
     cache_path    = (os.getenv("XDG_CACHE_HOME") or os.getenv("HOME") .. "/.cache") .. "/claude-usage/rate_limits.json",
     stale_after   = 3600,     -- cached data older than this is marked "(stale)"
+    fresh_cache_max_age = 120, -- a statusLine cache younger than this replaces the API call
+
+    -- Sessions (~/.claude/sessions) and adaptive polling
+    sessions      = true,     -- watch running Claude Code sessions
+    sessions_interval = 10,   -- seconds between directory scans (local files only)
+    interval_idle = 900,      -- fetch interval while no session is working
+    sessions_in_bar = true,   -- append a flag to the bar text when a session waits for you
+    attention_flag = " \u{2691}",
+    notify_attention = true,  -- a session waits for a permission or an answer
+    notify_finished = false,  -- a session went from working to idle
+
+    -- History and forecast
+    history       = true,     -- record samples, show burn rate / forecast / pacing
+    history_path  = "~/.cache/claude-usage/history.csv",
+    sparkline_hours = 24,
 
     -- Appearance
     font          = nil,      -- nil = beautiful.font; popup fonts are derived from it
@@ -200,6 +223,9 @@ The state table:
     scoped     = { { name = "Fable", percent = 51, resets_at = 1790175600 } }, -- per-model weekly limits
     spend      = { enabled = false, percent = 0, used = 0, currency = "USD", limit = nil }, -- extra usage
     breakdown  = { { name = "Claude Code", percent = 89 }, { name = "Chats", percent = 11 } },
+    forecast   = { five_hour = { rate = 0.0012, at_reset = 38, exhaust_at = nil }, seven_day = { ... }, scoped = {} },
+    pace       = { five_hour = 20, seven_day = 55 },   -- percent an even spread would be at now
+    sessions   = { total = 2, working = 1, idle = 1, attention = 0, list = { ... } },
     fetched_at = 1758560000,  -- epoch seconds when the data was produced
     source     = "api",       -- "api" | "statusline" | "claude_json"
     stale      = false,
@@ -242,13 +268,41 @@ Requires `jq`. The cache only updates while a Claude Code session is running;
 the widget marks it stale after an hour and prefers the API when that works.
 To rely on the cache alone (no network at all): `sources = { "statusline" }`.
 
+## CLI (waybar, polybar, tmux)
+
+`cli.lua` runs the same code without AwesomeWM:
+
+```sh
+lua5.4 ~/.config/awesome/claude_usage/cli.lua            # 5h 16% · 7d 4%
+lua5.4 ~/.config/awesome/claude_usage/cli.lua --lines    # the popup text
+lua5.4 ~/.config/awesome/claude_usage/cli.lua --json     # the state table
+lua5.4 ~/.config/awesome/claude_usage/cli.lua --waybar   # {"text","tooltip","class","percentage"}
+```
+
+It caches its result in `~/.cache/claude-usage/last.json` and reuses it for
+`--max-age` seconds (default 300), keeps the same backoff on 429, and records the
+history file, so a bar may call it every few seconds. `--no-network` uses the cache
+files only. Waybar example:
+
+```json
+"custom/claude": {
+  "exec": "lua5.4 ~/.config/awesome/claude_usage/cli.lua --waybar",
+  "return-type": "json",
+  "interval": 60
+}
+```
+
+The `class` is `normal`, `warn`, `crit`, `stale` or `error` for styling.
+
 ## How polling and rate limiting work
 
 The usage endpoint is the one Claude Code itself calls for `/usage`. It is not
 documented and it rate-limits aggressively: too many calls and it answers
 `429` for a while. The widget therefore
 
-- polls every 5 minutes with a little jitter (`interval` cannot go below 120 s),
+- polls every 5 minutes with a little jitter while a Claude Code session is working and every
+  15 minutes otherwise (`interval` cannot go below 120 s), with one early check when work starts or stops,
+- skips the call when the statusLine cache is younger than two minutes,
 - backs off exponentially after a 429, 5xx or network error (5, 10, 20, 30 minutes),
 - refuses a forced refresh (right click) while backing off and says so in the popup,
 - falls back to the statusLine cache and `~/.claude.json` so the bar keeps showing numbers.
