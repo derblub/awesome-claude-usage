@@ -128,6 +128,7 @@ claude_usage.new({
     cache_path    = (os.getenv("XDG_CACHE_HOME") or os.getenv("HOME") .. "/.cache") .. "/claude-usage/rate_limits.json",
     stale_after   = 3600,     -- cached data older than this is marked "(stale)"
     fresh_cache_max_age = 120, -- a statusLine cache younger than this replaces the API call
+                              -- (the API is still asked at least every interval_idle)
 
     -- Sessions (~/.claude/sessions) and adaptive polling
     sessions      = true,     -- watch running Claude Code sessions
@@ -389,7 +390,8 @@ documented and it rate-limits aggressively: too many calls and it answers
 
 - polls every 5 minutes with a little jitter while a Claude Code session is working and every
   15 minutes otherwise (`interval` cannot go below 120 s), with one early check when work starts or stops,
-- skips the call when the statusLine cache is younger than two minutes,
+- skips the call when the statusLine cache is younger than two minutes, but still asks the API at
+  least every `interval_idle` for the details only it has (per-model limits, breakdown, spend),
 - backs off exponentially after a 429, 5xx or network error (5, 10, 20, 30 minutes),
 - refuses a forced refresh (right click) while backing off and says so in the popup,
 - falls back to the statusLine cache and `~/.claude.json` so the bar keeps showing numbers.

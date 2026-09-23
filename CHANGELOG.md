@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.3] - 2026-09-23
+
+### Fixed
+- The per-model weekly limits (e.g. "Fable"), the weekly breakdown and the spend disappeared while a
+  session was running: the fresh statusLine cache replaced every API call. The API is now asked at
+  least every `interval_idle` regardless of the cache, and a statusLine state keeps those details
+  from the last API answer within the same weekly cycle.
+
 ## [0.5.2] - 2026-09-23
 
 ### Fixed
@@ -82,6 +90,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Desktop notifications when a window crosses the warn/crit thresholds.
 - `contrib/statusline-cache.sh` helper for the Claude Code statusLine.
 
+[0.5.3]: https://github.com/derblub/awesome-claude-usage/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/derblub/awesome-claude-usage/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/derblub/awesome-claude-usage/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/derblub/awesome-claude-usage/compare/v0.4.0...v0.5.0

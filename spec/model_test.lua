@@ -172,13 +172,41 @@ describe("model", function()
 end)
 
 describe("model (cache preference, sessions, history)", function()
-	it("uses a fresh statusline cache instead of calling the API", function()
-		local deps = setup({ fresh_cache_max_age = 120 })
-		deps.t = 1758560000 + 60 -- fixture ts is 1758560000
+	it("uses a fresh statusline cache between API polls and keeps the API-only details", function()
+		-- cache with the same weekly reset as the API fixture (2026-09-23T15:00Z = 1790175600)
+		local cache = io.open("spec/tmp/same_cycle.json", "w")
+		cache:write('{"ts":1758560000,"rate_limits":{"five_hour":{"used_percentage":23.5,"resets_at":1758570000},'
+			.. '"seven_day":{"used_percentage":41.2,"resets_at":1790175600}}}')
+		cache:close()
+		local deps = setup({ fresh_cache_max_age = 120, interval_idle = 900, cache_path = "spec/tmp/same_cycle.json" })
+		deps.t = 1758560000 - 100
+		-- first poll always asks the API
 		deps.timers[1]:fire()
-		assert_eq(#deps.spawned, 0)
+		assert_eq(#deps.spawned, 1)
+		H.respond(deps, API_BODY, 200)
+		assert_eq(model.state.source, "api")
+		assert_eq(#model.state.scoped, 2)
+		-- cache ts is 1758560000: fresh, API answer recent -> no network
+		deps.t = 1758560000 + 60
+		deps.timers[1]:fire()
+		assert_eq(#deps.spawned, 1)
 		assert_eq(model.state.source, "statusline")
-		assert_eq(deps.timers[1].timeout, 300)
+		assert_eq(model.state.five_hour.percent, 23.5)
+		assert_eq(#model.state.scoped, 2, "scoped limits carried over from the API")
+		assert_eq(model.state.scoped[1].name, "Fable")
+		assert_eq(model.state.scoped_from, 1758560000 - 100)
+		assert_true(model.state.breakdown ~= nil)
+		-- after interval_idle the API is asked again even though the cache is fresh
+		deps.t = 1758560000 - 100 + 901
+		local later = io.open("spec/tmp/fresh_cache.json", "w")
+		later:write('{"ts":' .. deps.t .. ',"rate_limits":{"five_hour":{"used_percentage":1},'
+			.. '"seven_day":{"used_percentage":2}}}')
+		later:close()
+		model.stop()
+		local deps2 = setup({ fresh_cache_max_age = 120, interval_idle = 900, cache_path = "spec/tmp/fresh_cache.json" })
+		deps2.t = deps.t
+		deps2.timers[1]:fire()
+		assert_eq(#deps2.spawned, 1, "no recent API answer -> API is called")
 	end)
 
 	it("polls slowly while no session works and fast while one does", function()
@@ -275,9 +303,13 @@ describe("model (hook, cache watch)", function()
 		})
 		model.setup(opts, deps)
 		assert_true(watched ~= nil and watched.path == "spec/fixtures/statusline.json")
+		deps.t = 1758560000 - 60
+		deps.timers[1]:fire()
+		H.respond(deps, API_BODY, 200)
+		assert_eq(model.state.source, "api")
 		deps.t = 1758560000 + 30
 		watched.cb()
-		assert_eq(#deps.spawned, 0)
+		assert_eq(#deps.spawned, 1, "fresh cache, recent API answer: no network")
 		assert_eq(model.state.source, "statusline")
 		assert_eq(model.state.next_fetch_at, deps.t + 300)
 		-- debounced

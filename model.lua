@@ -29,6 +29,8 @@ local _setup = false
 local _last_good = nil
 local _creds = nil
 local _samples = nil -- history samples (nil when history is off)
+local _last_api = nil -- last state that came from the API (scoped limits, breakdown, spend)
+local _last_api_at = nil
 local _sessions = nil -- last sessions summary
 local _sessions_timer = nil
 local _next_fetch_at = nil
@@ -148,10 +150,45 @@ local function record(st, t)
 	end
 end
 
+--- The statusLine only carries the two main windows. Keep the per-model limits, the
+--- breakdown and the spend from the last API answer while the weekly cycle is the same.
+local function merge_api_details(st)
+	if st.source ~= "statusline" or not _last_api then
+		return
+	end
+	local same_cycle = true
+	if st.seven_day and st.seven_day.resets_at and _last_api.seven_day and _last_api.seven_day.resets_at then
+		same_cycle = math.abs(st.seven_day.resets_at - _last_api.seven_day.resets_at) <= 120
+	end
+	if not same_cycle then
+		return
+	end
+	if #(st.scoped or {}) == 0 and _last_api.scoped and #_last_api.scoped > 0 then
+		st.scoped = {}
+		for i, w in ipairs(_last_api.scoped) do
+			local copy = {}
+			for k, v in pairs(w) do
+				copy[k] = v
+			end
+			st.scoped[i] = copy
+		end
+		st.scoped_from = _last_api.fetched_at
+	end
+	st.breakdown = st.breakdown or _last_api.breakdown
+	if not st.spend or (st.spend.used == nil and _last_api.spend) then
+		st.spend = _last_api.spend
+	end
+end
+
 local function finalize(st, delay, err)
 	_inflight = false
 	local t = now()
 	st.scoped = st.scoped or {}
+	if st.source == "api" then
+		_last_api = st
+		_last_api_at = t
+	end
+	merge_api_details(st)
 	st.error = err
 	st.stale = is_stale(st, t)
 	st.subscription = (_creds and _creds.subscription) or (M.state and M.state.subscription) or nil
@@ -202,7 +239,8 @@ local function fetch_api(i, err, delay)
 			uses_cache = true
 		end
 	end
-	if uses_cache and (_opts.fresh_cache_max_age or 0) > 0 then
+	local api_recent = _last_api_at ~= nil and (t - _last_api_at) < (_opts.interval_idle or _opts.interval)
+	if uses_cache and api_recent and (_opts.fresh_cache_max_age or 0) > 0 then
 		local raw = statusline_cache.read(_opts.cache_path)
 		if raw and tonumber(raw.ts) and t - tonumber(raw.ts) <= _opts.fresh_cache_max_age then
 			local st = normalize.from_statusline(raw, t)
@@ -517,6 +555,8 @@ function M.stop()
 	_samples = nil
 	_sessions = nil
 	_next_fetch_at = nil
+	_last_api = nil
+	_last_api_at = nil
 	_subs = {}
 	_inflight = false
 	_setup = false

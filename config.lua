@@ -2,7 +2,7 @@
 
 local M = {}
 
-M.version = "0.5.2"
+M.version = "0.5.3"
 
 local home = os.getenv("HOME") or ""
 local xdg_cache = os.getenv("XDG_CACHE_HOME") or (home .. "/.cache")
