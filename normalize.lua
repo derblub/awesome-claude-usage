@@ -175,14 +175,19 @@ function M.from_statusline(raw, now)
 	if type(raw) ~= "table" then
 		return st
 	end
-	local rl = type(raw.rate_limits) == "table" and raw.rate_limits or {}
-	if type(rl.five_hour) == "table" then
-		st.five_hour = window(percent(rl.five_hour.used_percentage), epoch_seconds(rl.five_hour.resets_at))
+	local rl = type(raw.rate_limits) == "table" and raw.rate_limits or nil
+	if rl then
+		-- Claude Code drops a window from rate_limits once its reset time has passed and no new
+		-- usage started it again, so a missing window next to a present one means "0 %, not started".
+		for _, key in ipairs({ "five_hour", "seven_day" }) do
+			if type(rl[key]) == "table" then
+				st[key] = window(percent(rl[key].used_percentage), epoch_seconds(rl[key].resets_at))
+			else
+				st[key] = { percent = 0, resets_at = nil, assumed = true }
+			end
+		end
 	end
-	if type(rl.seven_day) == "table" then
-		st.seven_day = window(percent(rl.seven_day.used_percentage), epoch_seconds(rl.seven_day.resets_at))
-	end
-	if type(rl.spend_limit) == "table" and percent(rl.spend_limit.used_percentage) then
+	if rl and type(rl.spend_limit) == "table" and percent(rl.spend_limit.used_percentage) then
 		st.spend = { enabled = true, percent = percent(rl.spend_limit.used_percentage), currency = "USD" }
 	end
 	local ts = epoch_seconds(raw.ts)

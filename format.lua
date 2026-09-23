@@ -284,7 +284,9 @@ local function window_line(label, w, now)
 		return nil
 	end
 	local parts = { string.format("%s: %d%%", label, M.round(w.percent)) }
-	if w.resets_at then
+	if w.assumed then
+		parts[#parts + 1] = "no usage yet"
+	elseif w.resets_at then
 		local d = w.resets_at - now
 		if d > 8 * 86400 or d < -86400 then
 			parts[#parts + 1] = "resets at " .. timeparse.absolute(w.resets_at)
@@ -417,6 +419,9 @@ function M.plan_name(subscription)
 end
 
 local function reset_text(w, now)
+	if w and w.assumed then
+		return "no usage yet"
+	end
 	if not w or not w.resets_at then
 		return nil
 	end
