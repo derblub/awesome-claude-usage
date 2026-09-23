@@ -154,6 +154,11 @@ function M.build(rows, opts, samples)
 		body:add(textbox(span("This week: " .. rows.breakdown, c.muted), f_small))
 	end
 
+	-- Active session context window
+	if rows.context then
+		body:add(textbox(span(rows.context, c.muted), f_small))
+	end
+
 	-- Sessions
 	if rows.sessions and rows.sessions.text then
 		local color = rows.sessions.attention > 0 and c.warn or c.muted

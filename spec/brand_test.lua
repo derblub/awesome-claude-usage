@@ -73,7 +73,7 @@ describe("format.popup_rows", function()
 	it("marks stale cached data", function()
 		local st = { scoped = {}, five_hour = { percent = 1 }, fetched_at = 0, source = "claude_json", stale = true }
 		local rows = format.popup_rows(st, 7200, opts)
-		assert_eq(rows.subtitle, "via ~/.claude.json cache 2 h ago · stale")
+		assert_eq(rows.subtitle, "via claude.json cache 2 h ago · stale")
 		assert_eq(rows.windows[2].percent, nil)
 	end)
 end)

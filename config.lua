@@ -2,7 +2,7 @@
 
 local M = {}
 
-M.version = "0.5.1"
+M.version = "0.5.2"
 
 local home = os.getenv("HOME") or ""
 local xdg_cache = os.getenv("XDG_CACHE_HOME") or (home .. "/.cache")
@@ -69,7 +69,7 @@ M.defaults = {
 	-- Popup
 	popup = true,
 	popup_placement = nil, -- fun(popup, geometry) override
-	popup_width = 300, -- dpi
+	popup_width = 340, -- dpi
 	popup_colors = { bg = "#1F1E1D", fg = "#FAF9F5", muted = "#9C9A93", border = "#3A3835", track = "#3A3835",
 		accent = "#D97757", warn = "#E39B3A", crit = "#C8442E" },
 	popup_border_width = 1,

@@ -168,7 +168,7 @@ claude_usage.new({
 
     -- Popup
     popup         = true,     -- built-in hover popup; false to build your own
-    popup_width   = 300,      -- dpi
+    popup_width   = 340,      -- dpi
     popup_colors  = { bg = "#1F1E1D", fg = "#FAF9F5", muted = "#9C9A93", border = "#3A3835",
                       track = "#3A3835", accent = "#D97757", warn = "#E39B3A", crit = "#C8442E" },
     popup_border_width = 1, popup_radius = 10,

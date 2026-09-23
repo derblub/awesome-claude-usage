@@ -254,7 +254,7 @@ function M.money(amount, currency)
 	return string.format("%.2f %s", amount, currency)
 end
 
-local SOURCE_NAME = { api = "API", statusline = "statusLine cache", claude_json = "~/.claude.json cache" }
+local SOURCE_NAME = { api = "API", statusline = "statusLine", claude_json = "claude.json cache" }
 
 --- Human readable error message for the popup.
 function M.error_text(err, now)
