@@ -9,6 +9,7 @@
   <a href="https://github.com/derblub/awesome-claude-usage/releases"><img alt="Release" src="https://img.shields.io/github/v/release/derblub/awesome-claude-usage?color=D97757"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-FAF9F5?labelColor=1F1E1D"></a>
   <img alt="Lua 5.4 / LuaJIT" src="https://img.shields.io/badge/lua-5.4%20%7C%20LuaJIT-1F1E1D?logo=lua">
+  <a href="https://www.reddit.com/r/awesomewm/comments/1wnzmmk/awesomeclaudeusage_claude_code_rate_limits_5h_7d/"><img alt="Discussed on r/awesomewm" src="https://img.shields.io/badge/r%2Fawesomewm-discussion-FF4500?logo=reddit&logoColor=white"></a>
 </p>
 
 <p align="center">
