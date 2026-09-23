@@ -85,7 +85,18 @@ local function real_deps()
 			return gears.timer(args)
 		end,
 		notify = function(args)
-			naughty.notification(args)
+			if naughty.notification then
+				naughty.notification(args)
+			else
+				-- awesome 4.3 stable has no notification object API
+				naughty.notify({
+					title = args.title,
+					text = args.message,
+					timeout = args.timeout,
+					icon = args.icon,
+					preset = args.urgency == "critical" and naughty.config.presets.critical or nil,
+				})
+			end
 		end,
 		warn = warn,
 	}

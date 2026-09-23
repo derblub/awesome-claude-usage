@@ -77,7 +77,8 @@ click opens Claude Code.
 
 ## Requirements
 
-- AwesomeWM 4.3 or the git version (API level 4)
+- AwesomeWM git (4.3-git, API level 4) is what it is developed and tested on. Stable 4.3 is
+  untested; notifications fall back to `naughty.notify` there, but other API differences may bite
 - `curl`
 - Claude Code, logged in with a claude.ai Pro or Max subscription (API-key users have no rate-limit windows)
 - Any font; the icon is drawn with cairo. A Nerd Font is only needed for `icon = "glyph"`
