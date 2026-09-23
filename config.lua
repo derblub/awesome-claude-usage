@@ -31,8 +31,8 @@ M.defaults = {
 	interval_idle = 900, -- fetch interval while no session is working
 	sessions_in_bar = true, -- append a flag to the bar text when a session needs attention
 	attention_flag = " \u{2691}", -- U+2691 black flag
-	spend_in_bar = true, -- append a marker while paid extra usage is being consumed
-	spend_flag = " $",
+	spend_in_bar = true, -- append the extra usage spent (" +3.53 €") while it is being consumed
+	spend_flag = nil, -- fixed marker instead of the amount, e.g. " $"
 	watch_cache = true, -- react to the statusLine cache instantly via inotifywait (if installed)
 	context_max_age = 900, -- show the active session's context window while the cache is this fresh
 	notify_attention = true, -- a session waits for a permission or an answer
@@ -53,7 +53,7 @@ M.defaults = {
 	show_glyph = true, -- only for icon = "glyph"
 	format = nil, -- fun(state, fmt) -> plain text; nil for the default "5h 3% · 7d 67%"
 	compact = false, -- icon only; the chip fills up like a bar (style = "chip")
-	bar_windows = { "five_hour", "seven_day" }, -- windows in the bar text; also "scoped:<Model>"
+	bar_windows = { "five_hour", "seven_day", "scoped" }, -- windows in the bar text; "scoped" = every per-model limit, or "scoped:<Model>"
 	color_window = "max", -- which window colours the chip/text: "max", "five_hour", "seven_day", "scoped:<Model>"
 	separator = " · ",
 	forced_width = nil,

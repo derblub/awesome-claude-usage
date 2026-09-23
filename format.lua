@@ -159,15 +159,23 @@ function M.bar_text(st, opts)
 	end
 	local parts = {}
 	if not opts.compact then
-		for _, key in ipairs(opts.bar_windows or { "five_hour", "seven_day" }) do
-			local label = key == "five_hour" and "5h" or key == "seven_day" and "7d" or key:match("^scoped:(.+)$") or key
-			parts[#parts + 1] = label .. " " .. pct_text(M.window(st, key))
+		for _, key in ipairs(opts.bar_windows or { "five_hour", "seven_day", "scoped" }) do
+			if key == "scoped" then
+				for _, w in ipairs(st.scoped or {}) do
+					parts[#parts + 1] = tostring(w.name) .. " " .. pct_text(w)
+				end
+			else
+				local label = key == "five_hour" and "5h" or key == "seven_day" and "7d" or key:match("^scoped:(.+)$") or key
+				parts[#parts + 1] = label .. " " .. pct_text(M.window(st, key))
+			end
 		end
 	end
 	local text = glyph .. table.concat(parts, opts.separator or " · ")
 	local spending = st.spend and st.spend.enabled and ((st.spend.percent or 0) > 0 or (st.spend.used or 0) > 0)
 	if opts.spend_in_bar and spending then
-		text = text .. (opts.spend_flag or " $")
+		local amount = (st.spend.used or 0) > 0 and M.money(st.spend.used, st.spend.currency)
+			or string.format("%d%%", M.round(st.spend.percent or 0))
+		text = text .. (opts.spend_flag or (" +" .. amount))
 	end
 	if opts.sessions_in_bar and st.sessions and (st.sessions.attention or 0) > 0 then
 		text = text .. (opts.attention_flag or " !")
