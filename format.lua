@@ -200,6 +200,9 @@ function M.forecast_text(fc, now)
 	if type(fc) ~= "table" then
 		return nil, "normal"
 	end
+	if fc.exhaust_at and fc.exhaust_at <= now then
+		return "limit reached", "crit"
+	end
 	if fc.exhaust_at then
 		local left = fc.exhaust_at - now
 		local level = left < 3600 and "crit" or "warn"

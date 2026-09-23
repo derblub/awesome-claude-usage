@@ -364,7 +364,8 @@ of the current reset cycle the widget derives a burn rate per window and shows:
 
 - **at this pace ~38% at reset** when the window will survive until its reset,
 - **at this pace empty in 1h 20m** (amber, red under an hour) when it will not,
-- **no usage lately** when the percentage has not moved.
+- **no usage lately** when the percentage has not moved,
+- **limit reached** (red) once the window is used up.
 
 A forecast needs at least 15 minutes of samples for the 5-hour window and 3 hours
 for the weekly windows; before that the line is simply absent. The thin marker on a

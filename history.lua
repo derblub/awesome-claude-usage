@@ -172,7 +172,13 @@ end
 ---@param now integer
 ---@return table|nil { rate, at_reset = percent expected at reset (nil without resets_at), exhaust_at = epoch or nil }
 function M.forecast(w, rate, now)
-	if not w or type(w.percent) ~= "number" or rate == nil then
+	if not w or type(w.percent) ~= "number" then
+		return nil
+	end
+	if w.percent >= 100 then
+		return { rate = rate, exhaust_at = now } -- used up, whatever the rate
+	end
+	if rate == nil then
 		return nil
 	end
 	local out = { rate = rate }

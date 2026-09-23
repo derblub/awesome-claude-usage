@@ -9,6 +9,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Notifications fall back to `naughty.notify` on awesome 4.3 stable; the README now states that
   stable 4.3 is untested.
 
+### Fixed
+- A used-up window showed "at this pace empty in expired" in the popup; it now says "limit reached".
+
 ## [0.5.3] - 2026-09-23
 
 ### Fixed
