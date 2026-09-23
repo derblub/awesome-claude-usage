@@ -139,7 +139,7 @@ claude_usage.new({
     interval_idle = 900,      -- fetch interval while no session is working
     sessions_in_bar = true,   -- append a flag to the bar text when a session waits for you
     attention_flag = " \u{2691}",
-    spend_in_bar  = true,     -- append the extra usage spent (" +3.53 €") while it is being consumed
+    spend_in_bar  = true,     -- append the extra usage spent (" +3.53€") while it is being consumed
     spend_flag    = nil,      -- a fixed marker instead of the amount, e.g. " $"
     watch_cache   = true,     -- read the statusLine cache the moment it changes (needs inotifywait)
     context_max_age = 900,    -- show the active session's context window while the cache is this fresh
@@ -168,7 +168,7 @@ claude_usage.new({
     format        = nil,      -- custom bar text, see below
     compact       = false,    -- icon only; the chip fills up like a bar
     bar_windows   = { "five_hour", "seven_day", "scoped" }, -- windows in the bar text; "scoped" = every
-                              -- per-model limit, or name one with "scoped:Fable"
+                              -- per-model limit as its first letter ("F 100%"), or name one with "scoped:Fable"
     color_window  = "max",    -- window that colours the chip/text: "max", "five_hour", "seven_day", "scoped:<Model>"
 
     -- Popup

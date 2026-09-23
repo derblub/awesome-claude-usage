@@ -9,8 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Notifications fall back to `naughty.notify` on awesome 4.3 stable; the README now states that
   stable 4.3 is untested.
 - The bar text shows every per-model limit by default (`bar_windows` gains the entry `"scoped"`),
-  e.g. "5h 23% · 7d 53% · Fable 100%".
-- While extra usage is consumed the bar shows the amount ("+3.53 €") instead of a bare " $";
+  abbreviated to the model's first letter: "5h 23% · 7d 53% · F 100%".
+- While extra usage is consumed the bar shows the amount ("+3.53€") instead of a bare " $";
   set `spend_flag = " $"` for the old marker.
 
 ### Fixed

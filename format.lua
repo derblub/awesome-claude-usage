@@ -135,6 +135,11 @@ local function pct_text(w)
 	return "--"
 end
 
+--- First letter of a model name, to keep the bar short ("Fable" -> "F").
+local function short_name(name)
+	return tostring(name):match("^[%z\1-\127\194-\244][\128-\191]*") or tostring(name)
+end
+
 --- Plain text for the bar (no markup; the widget escapes it).
 ---@param st table|nil
 ---@param opts table resolved options
@@ -162,10 +167,11 @@ function M.bar_text(st, opts)
 		for _, key in ipairs(opts.bar_windows or { "five_hour", "seven_day", "scoped" }) do
 			if key == "scoped" then
 				for _, w in ipairs(st.scoped or {}) do
-					parts[#parts + 1] = tostring(w.name) .. " " .. pct_text(w)
+					parts[#parts + 1] = short_name(w.name) .. " " .. pct_text(w)
 				end
 			else
-				local label = key == "five_hour" and "5h" or key == "seven_day" and "7d" or key:match("^scoped:(.+)$") or key
+				local name = key:match("^scoped:(.+)$")
+				local label = key == "five_hour" and "5h" or key == "seven_day" and "7d" or name and short_name(name) or key
 				parts[#parts + 1] = label .. " " .. pct_text(M.window(st, key))
 			end
 		end
@@ -173,7 +179,7 @@ function M.bar_text(st, opts)
 	local text = glyph .. table.concat(parts, opts.separator or " · ")
 	local spending = st.spend and st.spend.enabled and ((st.spend.percent or 0) > 0 or (st.spend.used or 0) > 0)
 	if opts.spend_in_bar and spending then
-		local amount = (st.spend.used or 0) > 0 and M.money(st.spend.used, st.spend.currency)
+		local amount = (st.spend.used or 0) > 0 and M.money(st.spend.used, st.spend.currency):gsub(" ", "")
 			or string.format("%d%%", M.round(st.spend.percent or 0))
 		text = text .. (opts.spend_flag or (" +" .. amount))
 	end
