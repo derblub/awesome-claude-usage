@@ -2,25 +2,33 @@
 
 local M = {}
 
---- Convert a broken-down UTC time table into an epoch timestamp.
---- os.time() always interprets its argument as local time, so the local/UTC
---- delta at that instant is measured and added back.
+--- Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant's days_from_civil).
+--- Only floor division on non-negative operands, so it behaves the same on Lua 5.1 and 5.3+.
+---@param y integer
+---@param m integer 1-12
+---@param d integer 1-31
+---@return integer
+local function days_from_civil(y, m, d)
+	if m <= 2 then
+		y = y - 1
+	end
+	local era = math.floor(y / 400)
+	local yoe = y - era * 400 -- [0, 399]
+	local mp = (m + 9) % 12 -- March = 0
+	local doy = math.floor((153 * mp + 2) / 5) + d - 1 -- [0, 365]
+	local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy -- [0, 146096]
+	return era * 146097 + doe - 719468
+end
+
+--- Convert broken-down UTC fields into an epoch timestamp.
+--- Pure arithmetic: os.time() would interpret the fields as local time and be off around DST changes.
 ---@param f table  Fields year, month, day, hour, min, sec (UTC).
 ---@return integer|nil
 local function epoch_from_utc_fields(f)
-	f.isdst = nil
-	local ok, guess = pcall(os.time, f)
-	if not ok or type(guess) ~= "number" then
+	if f.month < 1 or f.month > 12 or f.day < 1 or f.day > 31 then
 		return nil
 	end
-	local u = os.date("!*t", guess)
-	u.isdst = nil
-	local ok2, as_local = pcall(os.time, u)
-	if not ok2 or type(as_local) ~= "number" then
-		return nil
-	end
-	local offset = guess - as_local -- local minus UTC at that instant
-	return guess + offset
+	return days_from_civil(f.year, f.month, f.day) * 86400 + f.hour * 3600 + f.min * 60 + f.sec
 end
 
 --- Parse an ISO 8601 timestamp such as "2026-09-23T15:00:00.261688+00:00" or
@@ -68,7 +76,8 @@ function M.iso8601(s)
 end
 
 --- Format the duration from `now` until `target` as a short string.
---- Examples: "2h 14m", "3d 4h", "43m", "now", "expired".
+--- Examples: "2h 14m", "3d 4h", "43m", "<1m", "expired" (target in the past; callers that
+--- prefix the result with "resets in" and the like should check for that case themselves).
 ---@param target integer|nil epoch seconds
 ---@param now integer epoch seconds
 ---@return string|nil  nil when target is nil
@@ -81,7 +90,7 @@ function M.relative(target, now)
 		return "expired"
 	end
 	if d < 60 then
-		return "now"
+		return "<1m"
 	end
 	local days = math.floor(d / 86400)
 	local hours = math.floor((d % 86400) / 3600)

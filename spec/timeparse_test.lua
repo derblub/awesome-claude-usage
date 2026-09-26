@@ -21,6 +21,29 @@ describe("timeparse.iso8601", function()
 		assert_nil(tp.iso8601(nil))
 		assert_nil(tp.iso8601("2026-07-26T15:50:00+2"))
 	end)
+	it("round-trips instants next to DST transitions in any TZ", function()
+		for _, s in ipairs({
+			"2026-03-29T01:00:00Z",
+			"2026-03-29T01:30:00Z",
+			"2026-03-29T02:30:00Z",
+			"2026-03-29T03:00:00Z",
+			"2026-10-25T00:30:00Z",
+			"2026-10-25T01:00:00Z",
+			"2026-10-25T01:30:00Z",
+			"2026-10-25T02:30:00Z",
+			"2024-03-10T07:00:00Z",
+			"2024-11-03T06:00:00Z",
+		}) do
+			assert_eq(os.date("!%Y-%m-%dT%H:%M:%SZ", tp.iso8601(s)), s)
+		end
+	end)
+	it("handles leap days, the epoch and pre-1970 dates", function()
+		assert_eq(tp.iso8601("1970-01-01T00:00:00Z"), 0)
+		assert_eq(tp.iso8601("2024-02-29T12:00:00Z"), 1709208000)
+		assert_eq(tp.iso8601("2000-03-01T00:00:00Z"), 951868800)
+		assert_eq(tp.iso8601("1969-12-31T23:59:59Z"), -1)
+		assert_nil(tp.iso8601("2026-13-01T00:00:00Z"))
+	end)
 end)
 
 describe("timeparse.relative", function()
@@ -30,7 +53,9 @@ describe("timeparse.relative", function()
 		assert_eq(tp.relative(1000 + 3 * 86400 + 4 * 3600, 1000), "3d 4h")
 	end)
 	it("handles boundaries", function()
-		assert_eq(tp.relative(1059, 1000), "now")
+		assert_eq(tp.relative(1059, 1000), "<1m")
+		assert_eq(tp.relative(1000, 1000), "<1m")
+		assert_eq(tp.relative(1060, 1000), "1m")
 		assert_eq(tp.relative(1000 + 3600, 1000), "1h 0m")
 		assert_eq(tp.relative(999, 1000), "expired")
 		assert_nil(tp.relative(nil, 1000))

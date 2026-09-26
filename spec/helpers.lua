@@ -2,7 +2,7 @@ local H = {}
 
 function H.read(path)
 	local f = assert(io.open(path, "r"))
-	local s = f:read("a")
+	local s = f:read("*a")
 	f:close()
 	return s
 end
@@ -13,12 +13,22 @@ end
 
 --- Fake awesome dependencies for model tests.
 function H.deps(t0)
-	local d = { t = t0 or 1758560000, spawned = {}, notifications = {}, timers = {}, warnings = {} }
+	local d = { t = t0 or 1758560000, spawned = {}, notifications = {}, timers = {}, warnings = {}, headers = {} }
 	d.now = function()
 		return d.t
 	end
 	d.spawn = function(argv, cb)
 		d.spawned[#d.spawned + 1] = { argv = argv, cb = cb }
+		return d.spawn_result
+	end
+	-- source/api.lua keeps the token in a header file; keep it in memory instead.
+	d.write_header = function(_, token)
+		local path = "spec/tmp/fake-auth-" .. (#d.spawned + 1) .. ".hdr"
+		d.headers[path] = "Authorization: Bearer " .. token
+		return path
+	end
+	d.remove = function(path)
+		d.headers[path] = nil
 	end
 	d.timer = function(args)
 		local tm = {
@@ -39,6 +49,7 @@ function H.deps(t0)
 			self.again_calls = self.again_calls + 1
 		end
 		function tm:fire()
+			assert(self.started, "firing a stopped timer")
 			if self.single_shot then
 				self.started = false
 			end
@@ -54,6 +65,20 @@ function H.deps(t0)
 		d.warnings[#d.warnings + 1] = msg
 	end
 	return d
+end
+
+--- The Authorization header of a spawned curl argv, whether inline or passed as -H @file.
+function H.auth_header(d, argv)
+	for i, a in ipairs(argv) do
+		if argv[i - 1] == "-H" then
+			if a:match("^Authorization:") then
+				return a
+			elseif a:sub(1, 1) == "@" then
+				return d.headers[a:sub(2)]
+			end
+		end
+	end
+	return nil
 end
 
 --- Simulate a finished curl run for the last spawned command.

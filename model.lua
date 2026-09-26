@@ -34,6 +34,9 @@ local _last_api_at = nil
 local _sessions = nil -- last sessions summary
 local _sessions_timer = nil
 local _next_fetch_at = nil
+local _inflight_at = nil -- when the running fetch started
+local _gen = 0 -- bumped by setup/stop/watchdog; callbacks of older fetches are ignored
+local _unwatch = nil -- stops the cache watcher
 
 local REDRAW_INTERVAL = 60
 
@@ -78,7 +81,7 @@ end
 
 --- Re-arm the fetch timer. Returns the effective delay.
 local function schedule_next(delay)
-	local jitter = _opts.jitter or 0
+	local jitter = math.floor(tonumber(_opts.jitter) or 0)
 	local d = delay
 	if jitter > 0 then
 		d = d + math.random(-jitter, jitter)
@@ -124,7 +127,9 @@ local function attach_analysis(st, t)
 	st.forecast = { scoped = {} }
 	st.pace = {}
 	local function analyse(key, w, lookback)
-		if not w then
+		-- An assumed window (reset passed, no new data yet) has no cycle to forecast; the old
+		-- cycle's samples would otherwise give a rate for a window that shows 0%.
+		if not w or w.assumed then
 			return nil
 		end
 		local rate = history.rate(_samples, key, t, lookback, w.resets_at)
@@ -142,7 +147,7 @@ local function attach_analysis(st, t)
 end
 
 local function record(st, t)
-	if _samples and (st.source == "api" or st.source == "statusline") and not is_stale(st, t) then
+	if _samples and not st.fallback and (st.source == "api" or st.source == "statusline") and not is_stale(st, t) then
 		local last = _samples[#_samples]
 		if not last or t - last.t >= 30 then
 			history.append(_opts.history_path, _samples, st, t)
@@ -152,8 +157,15 @@ end
 
 --- The statusLine only carries the two main windows. Keep the per-model limits, the
 --- breakdown and the spend from the last API answer while the weekly cycle is the same.
-local function merge_api_details(st)
+local function merge_api_details(st, t)
 	if st.source ~= "statusline" or not _last_api then
+		return
+	end
+	-- A missing or assumed weekly window, or a past API reset, means a new cycle may have started.
+	if not st.seven_day or st.seven_day.assumed then
+		return
+	end
+	if _last_api.seven_day and _last_api.seven_day.resets_at and _last_api.seven_day.resets_at <= t then
 		return
 	end
 	local same_cycle = true
@@ -165,14 +177,14 @@ local function merge_api_details(st)
 	end
 	if #(st.scoped or {}) == 0 and _last_api.scoped and #_last_api.scoped > 0 then
 		st.scoped = {}
-		for i, w in ipairs(_last_api.scoped) do
-			local copy = {}
-			for k, v in pairs(w) do
-				copy[k] = v
+		for _, w in ipairs(_last_api.scoped) do
+			if not (w.resets_at and w.resets_at <= t) then
+				st.scoped[#st.scoped + 1] = shallow_copy(w)
 			end
-			st.scoped[i] = copy
 		end
-		st.scoped_from = _last_api.fetched_at
+		if #st.scoped > 0 then
+			st.scoped_from = _last_api.fetched_at
+		end
 	end
 	st.breakdown = st.breakdown or _last_api.breakdown
 	if not st.spend or (st.spend.used == nil and _last_api.spend) then
@@ -182,31 +194,47 @@ end
 
 local function finalize(st, delay, err)
 	_inflight = false
+	_inflight_at = nil
 	local t = now()
 	st.scoped = st.scoped or {}
-	if st.source == "api" then
+	if st.source == "api" and not st.fallback then
 		_last_api = st
 		_last_api_at = t
 	end
-	merge_api_details(st)
+	merge_api_details(st, t)
 	st.error = err
 	st.stale = is_stale(st, t)
 	st.subscription = (_creds and _creds.subscription) or (M.state and M.state.subscription) or nil
+	if normalize.has_data(st) then
+		_last_good = st
+	end
+	-- Windows past their reset show 0 %; work on a copy so _last_good/_last_api keep the raw data.
+	st = normalize.expire(st, t)
 	record(st, t)
 	attach_analysis(st, t)
 	local d = schedule_next(delay or current_interval())
 	_next_fetch_at = t + d
 	st.next_fetch_at = _next_fetch_at
-	if normalize.has_data(st) then
-		_last_good = st
-	end
 	set_state(st)
 end
 
+--- The last good state again, marked so it is neither recorded nor taken for a fresh API answer.
 local function fallback_state()
 	local st = shallow_copy(_last_good or {})
 	st.scoped = st.scoped or {}
+	st.fallback = true
 	return st
+end
+
+--- Credentials, or the plan fields of an expired token (credentials.read's third value).
+local function read_credentials(t)
+	local creds, err, partial = credentials.read(_opts.credentials_path, t)
+	if creds then
+		_creds = creds
+	elseif type(partial) == "table" and (partial.subscription or partial.tier) then
+		_creds = { subscription = partial.subscription, tier = partial.tier }
+	end
+	return creds, err
 end
 
 local function read_file_source(name, t)
@@ -225,6 +253,37 @@ local function read_file_source(name, t)
 end
 
 local try_source
+
+--- Run a step of the fetch path; on an error clear the in-flight flag and keep polling.
+local function guarded(fn)
+	local ok, err = pcall(fn)
+	if ok then
+		return
+	end
+	_inflight = false
+	_inflight_at = nil
+	warn("fetch failed: " .. tostring(err))
+	local sok, serr = pcall(schedule_next, current_interval())
+	if not sok then
+		warn("cannot schedule the next fetch: " .. tostring(serr))
+	end
+end
+
+--- Give up on a fetch whose callback never came (e.g. curl could not be started).
+---@return boolean cleared
+local function check_watchdog()
+	if not _inflight or not _inflight_at then
+		return false
+	end
+	if now() - _inflight_at <= (tonumber(_opts.timeout) or 15) + 30 then
+		return false
+	end
+	warn("fetch did not finish in time; giving up on it")
+	_gen = _gen + 1
+	_inflight = false
+	_inflight_at = nil
+	return true
+end
 
 local function fetch_api(i, err, delay)
 	local t = now()
@@ -250,25 +309,30 @@ local function fetch_api(i, err, delay)
 			end
 		end
 	end
-	local creds, cerr = credentials.read(_opts.credentials_path, t)
+	local creds, cerr = read_credentials(t)
 	if not creds then
 		return try_source(i + 1, cerr, delay)
 	end
-	_creds = creds
+	local gen = _gen
 	api.fetch(_opts, _deps, creds.token, function(ok, res)
-		local t2 = now()
-		if ok then
-			_backoff:reset()
-			local st = normalize.from_api(res, t2)
-			st.source = "api"
-			return finalize(st, nil, nil)
+		if gen ~= _gen then
+			return -- stopped, restarted or given up by the watchdog meanwhile
 		end
-		local d = delay
-		if res.code == "rate_limited" or res.code == "network" then
-			d = _backoff:fail(t2)
-			res.retry_at = _backoff.until_at
-		end
-		return try_source(i + 1, res, d)
+		guarded(function()
+			local t2 = now()
+			if ok then
+				_backoff:reset()
+				local st = normalize.from_api(res, t2)
+				st.source = "api"
+				return finalize(st, nil, nil)
+			end
+			local d = delay
+			if res.code == "rate_limited" or res.code == "network" then
+				d = _backoff:fail(t2)
+				res.retry_at = _backoff.until_at
+			end
+			return try_source(i + 1, res, d)
+		end)
 	end)
 end
 
@@ -292,11 +356,15 @@ try_source = function(i, err, delay)
 end
 
 local function tick()
+	check_watchdog()
 	if _inflight then
 		return
 	end
 	_inflight = true
-	try_source(1, nil, nil)
+	_inflight_at = now()
+	guarded(function()
+		try_source(1, nil, nil)
+	end)
 end
 
 --- Paint something immediately from the file sources, before the first API fetch.
@@ -308,9 +376,11 @@ local function prime_from_cache()
 			if st and normalize.has_data(st) then
 				st.source = name
 				st.stale = is_stale(st, t)
+				st.subscription = _creds and _creds.subscription or nil
+				_last_good = st
+				st = normalize.expire(st, t)
 				attach_analysis(st, t)
 				st.next_fetch_at = t + (_opts.initial_delay or 0)
-				_last_good = st
 				set_state(st)
 				return
 			end
@@ -319,11 +389,14 @@ local function prime_from_cache()
 end
 
 local function redraw()
+	if check_watchdog() then
+		pcall(schedule_next, current_interval())
+	end
 	if not M.state or _inflight then
 		return
 	end
-	local st = shallow_copy(M.state)
 	local t = now()
+	local st = normalize.expire(M.state, t)
 	st.stale = is_stale(st, t)
 	attach_analysis(st, t)
 	set_state(st)
@@ -389,6 +462,7 @@ function M.setup(opts, deps)
 		return
 	end
 	_setup = true
+	_gen = _gen + 1
 	_opts = opts
 	_deps = deps
 	_backoff = backoff_mod.new(opts.backoff)
@@ -396,10 +470,7 @@ function M.setup(opts, deps)
 	math.randomseed(os.time() + math.floor((os.clock() * 1000) % 1000))
 
 	-- The plan name comes from the credentials file; read it once so cache-only states show it too.
-	local creds = credentials.read(opts.credentials_path, now())
-	if creds then
-		_creds = creds
-	end
+	read_credentials(now())
 
 	if opts.history then
 		local ok, samples = pcall(history.load, opts.history_path)
@@ -435,11 +506,13 @@ function M.setup(opts, deps)
 		})
 	end
 	if opts.watch_cache and deps.watch then
-		local ok, err = pcall(deps.watch, opts.cache_path, function()
+		local ok, res = pcall(deps.watch, opts.cache_path, function()
 			M.cache_changed()
 		end)
 		if not ok then
-			warn("cache watch unavailable: " .. tostring(err))
+			warn("cache watch unavailable: " .. tostring(res))
+		elseif type(res) == "function" then
+			_unwatch = res
 		end
 	end
 end
@@ -448,6 +521,9 @@ local _last_cache_event = 0
 
 --- The statusLine cache was rewritten: read it now (debounced, honours in-flight fetches).
 function M.cache_changed()
+	if _setup then
+		check_watchdog()
+	end
 	if not _setup or _inflight then
 		return
 	end
@@ -521,6 +597,9 @@ end
 --- Fetch now. With { force = true } the timer is ignored, the 429 backoff is not.
 ---@return boolean started
 function M.refresh(_args)
+	if _setup then
+		check_watchdog()
+	end
 	if not _setup or _inflight then
 		return false
 	end
@@ -540,6 +619,14 @@ end
 
 --- Stop timers and forget subscribers.
 function M.stop()
+	_gen = _gen + 1
+	if _unwatch then
+		local ok, err = pcall(_unwatch)
+		if not ok then
+			warn("cannot stop the cache watch: " .. tostring(err))
+		end
+		_unwatch = nil
+	end
 	if _timer then
 		_timer:stop()
 		_timer = nil
@@ -559,6 +646,7 @@ function M.stop()
 	_last_api_at = nil
 	_subs = {}
 	_inflight = false
+	_inflight_at = nil
 	_setup = false
 	_last_good = nil
 	_creds = nil

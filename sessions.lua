@@ -49,7 +49,7 @@ function M.read(dir, now, deps)
 	for _, name in ipairs(list(dir)) do
 		local f = io.open(dir .. "/" .. name, "r")
 		if f then
-			local content = f:read("a")
+			local content = f:read("*a")
 			f:close()
 			local ok, data = pcall(json.decode, content or "")
 			if ok and type(data) == "table" and data.pid and alive(data.pid) then

@@ -8,7 +8,7 @@
   <a href="https://github.com/derblub/awesome-claude-usage/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/derblub/awesome-claude-usage/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://github.com/derblub/awesome-claude-usage/releases"><img alt="Release" src="https://img.shields.io/github/v/release/derblub/awesome-claude-usage?color=D97757"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-FAF9F5?labelColor=1F1E1D"></a>
-  <img alt="Lua 5.4 / LuaJIT" src="https://img.shields.io/badge/lua-5.4%20%7C%20LuaJIT-1F1E1D?logo=lua">
+  <img alt="Lua 5.1-5.4 / LuaJIT" src="https://img.shields.io/badge/lua-5.1--5.4%20%7C%20LuaJIT-1F1E1D?logo=lua">
   <a href="https://www.reddit.com/r/awesomewm/comments/1wnzmmk/awesomeclaudeusage_claude_code_rate_limits_5h_7d/"><img alt="Discussed on r/awesomewm" src="https://img.shields.io/badge/r%2Fawesomewm-discussion-FF4500?logo=reddit&logoColor=white"></a>
 </p>
 
@@ -69,7 +69,7 @@ click opens Claude Code.
   3. `~/.claude.json`, Claude Code's own cached copy of the last `/usage` result
 - Exponential backoff on HTTP 429 and network errors; the bar never hammers the endpoint
 - Reads the OAuth token only. It never refreshes or writes it, so it cannot log you out.
-- Pure Lua, no LuaRocks dependencies; `curl` is the only external tool (`jq` for the optional
+- Pure Lua (5.1 to 5.4 and LuaJIT), no LuaRocks dependencies; `curl` is the only external tool (`jq` for the optional
   statusLine helper, a standalone `lua` for the CLI)
 
 | Bar | Popup |
@@ -81,6 +81,7 @@ click opens Claude Code.
 - AwesomeWM git (4.3-git, API level 4) is what it is developed and tested on. Stable 4.3 is
   untested; notifications fall back to `naughty.notify` there, but other API differences may bite
 - `curl`
+- Lua 5.1, 5.2, 5.3, 5.4 or LuaJIT (whatever your AwesomeWM is built against; the CLI runs on any of them)
 - Claude Code, logged in with a claude.ai Pro or Max subscription (API-key users have no rate-limit windows)
 - Any font; the icon is drawn with cairo. A Nerd Font is only needed for `icon = "glyph"`
 
@@ -109,7 +110,10 @@ s.mywibox:setup({
 ```
 
 The directory name does not matter: clone it as `claude_usage`, `awesome-claude-usage`
-or anything else and `require` that name. A complete minimal configuration is in
+or anything else and `require` that name. The module also registers itself as
+`claude_usage`, so the [hook](#the-hook-instant-needs-your-attention) and
+`awesome-client 'return require("claude_usage").debug()'` work whatever the clone
+directory is called. A complete minimal configuration is in
 [`example/rc.lua`](example/rc.lua).
 
 ## Configuration
@@ -124,13 +128,16 @@ claude_usage.new({
     jitter        = 30,       -- random +/- seconds on every interval
     timeout       = 15,       -- curl --max-time
     backoff       = { 300, 600, 1200, 1800 }, -- delays after consecutive 429/5xx/network errors
+    user_agent    = "awesome-claude-usage/<version> (+https://github.com/derblub/awesome-claude-usage)", -- curl -A
     sources       = { "api", "statusline", "claude_json" }, -- priority; remove entries to disable
+    api_url       = "https://api.anthropic.com/api/oauth/usage", -- the usage endpoint Claude Code calls for /usage
     credentials_path = os.getenv("HOME") .. "/.claude/.credentials.json",
     claude_json_path = os.getenv("HOME") .. "/.claude.json",
     cache_path    = (os.getenv("XDG_CACHE_HOME") or os.getenv("HOME") .. "/.cache") .. "/claude-usage/rate_limits.json",
     stale_after   = 3600,     -- cached data older than this is marked "(stale)"
     fresh_cache_max_age = 120, -- a statusLine cache younger than this replaces the API call
                               -- (the API is still asked at least every interval_idle)
+    curl_cmd      = "curl",   -- curl executable (name on $PATH or absolute path)
 
     -- Sessions (~/.claude/sessions) and adaptive polling
     sessions      = true,     -- watch running Claude Code sessions
@@ -138,7 +145,7 @@ claude_usage.new({
     sessions_interval = 10,   -- seconds between directory scans (local files only)
     interval_idle = 900,      -- fetch interval while no session is working
     sessions_in_bar = true,   -- append a flag to the bar text when a session waits for you
-    attention_flag = " \u{2691}",
+    attention_flag = " \226\154\145", -- U+2691 black flag
     spend_in_bar  = true,     -- append the extra usage spent (" +3.53€") while it is being consumed
     spend_flag    = nil,      -- a fixed marker instead of the amount, e.g. " $"
     watch_cache   = true,     -- read the statusLine cache the moment it changes (needs inotifywait)
@@ -156,12 +163,17 @@ claude_usage.new({
     style         = "chip",   -- "chip": rounded terracotta pill; "bare": icon + text only
     icon          = "starburst", -- "starburst" (drawn), "glyph" (text, needs a Nerd Font), "none"
     icon_size     = nil,      -- px, nil = 1.35 × font size
-    glyph         = "\u{f0e7}", -- for icon = "glyph"
+    glyph         = "\239\131\167", -- U+F0E7, for icon = "glyph"
+    error_glyph   = "\239\129\177", -- U+F071, replaces glyph while there is only an error to show
+    show_glyph    = true,     -- put glyph / error_glyph in front of the text (icon = "glyph" only)
     separator     = " · ",
     forced_width  = nil,      -- e.g. dpi(140) for a fixed width
-    thresholds    = { warn = 75, crit = 90 },
+    align         = "center", -- text alignment inside the widget: "left", "center", "right"
+    thresholds    = { warn = 75, crit = 90, spend = nil }, -- spend: extra usage percent that turns the
+                              -- popup row amber and notifies (nil = never)
     chip          = { normal = "#D97757", warn = "#E39B3A", crit = "#C8442E", error = "#4A4744",
-                      fg = "#FAF9F5", radius = 6, padding_x = 8, padding_y = 1 },
+                      fg = "#FAF9F5", track = "#3A3835", -- track: unfilled part in compact mode
+                      radius = 6, padding_x = 8, padding_y = 1 },
     colors        = { normal = nil, warn = "#E39B3A", crit = "#C8442E", error = "#9C9A93",
                       stale = nil, icon = "#D97757" },  -- text/icon colours for style = "bare"
     color_target  = "text",   -- "none": never colour the text (style = "bare" only)
@@ -173,6 +185,7 @@ claude_usage.new({
 
     -- Popup
     popup         = true,     -- built-in hover popup; false to build your own
+    popup_placement = nil,    -- function(popup, geometry) to place it yourself; geometry is the widget's
     popup_width   = 340,      -- dpi
     popup_colors  = { bg = "#1F1E1D", fg = "#FAF9F5", muted = "#9C9A93", border = "#3A3835",
                       track = "#3A3835", accent = "#D97757", warn = "#E39B3A", crit = "#C8442E" },
@@ -186,6 +199,7 @@ claude_usage.new({
     notify_reset     = false, -- when a window resets after it was above warn
     notify_error     = false, -- after three consecutive failed checks without any data
     notify_timeout   = 8,
+    notify_icon      = nil,   -- icon for every notification (path or surface); nil = none
 
     -- Mouse
     on_click        = "xterm -e claude", -- string: run with a shell; function(state, widget)
@@ -409,9 +423,11 @@ any `claude` command and the next check succeeds.
 
 ## Security
 
-- The token is read from a file only you can read (mode 600) and passed to a
-  local `curl` process as an argument. It is never logged, stored elsewhere or
-  sent anywhere except `api.anthropic.com`.
+- The token is read from a file only you can read (mode 600) and handed to a
+  local `curl` process through a short-lived mode 600 header file (`-H @file` in
+  `$XDG_RUNTIME_DIR/claude-usage/`, removed after each request), never on its
+  command line, so it does not show up in the process list. It is never logged,
+  stored elsewhere or sent anywhere except `api.anthropic.com`.
 - Nothing is written to `~/.claude/`. The project writes only under
   `~/.cache/claude-usage/`: `rate_limits.json` (statusLine helper), `history.csv`
   (usage samples: time, window, percent) and `last.json` (CLI result cache).
@@ -430,6 +446,7 @@ any `claude` command and the next check succeeds.
 | `!cred` | `~/.claude/.credentials.json` missing or unreadable | log in with `claude` |
 | `!429` | rate limited and no cached data | wait; do not lower `interval` |
 | `!net` | curl failed or 5xx, no cached data | check connectivity; the widget retries with backoff |
+| `!parse` | the endpoint answered something unexpected (not JSON, no HTTP status, or an HTTP code other than 200/401/403/429/5xx), no cached data | check the popup for the HTTP code; if it persists the undocumented endpoint may have changed, open an issue with the `debug()` dump |
 | `!none` | every source failed | check the popup for the last error |
 | `5h --` | that window is absent from the response (e.g. no subscription) | nothing to do |
 | a box instead of the icon | `icon = "glyph"` without a Nerd Font | use `icon = "starburst"` or set `glyph` |
@@ -443,7 +460,8 @@ Awesome's error output (`~/.cache/awesome/stderr.log` or the tty) shows
 ## Development
 
 ```sh
-make test     # runs spec/ with lua5.4 and luajit in two time zones, no dependencies
+make test     # runs spec/ with lua5.4, luajit and lua5.1 (each skipped if not installed, except lua5.4)
+              # under TZ=UTC and TZ=Europe/Vienna, no dependencies
 make lint     # luacheck (install via luarocks)
 ```
 

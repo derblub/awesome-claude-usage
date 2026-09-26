@@ -30,7 +30,7 @@ M.defaults = {
 	sessions_interval = 10, -- seconds between directory scans (local files only)
 	interval_idle = 900, -- fetch interval while no session is working
 	sessions_in_bar = true, -- append a flag to the bar text when a session needs attention
-	attention_flag = " \u{2691}", -- U+2691 black flag
+	attention_flag = " \226\154\145", -- U+2691 black flag
 	spend_in_bar = true, -- append the extra usage spent (" +3.53€") while it is being consumed
 	spend_flag = nil, -- fixed marker instead of the amount, e.g. " $"
 	watch_cache = true, -- react to the statusLine cache instantly via inotifywait (if installed)
@@ -48,8 +48,8 @@ M.defaults = {
 	style = "chip", -- "chip": orange pill with cream text; "bare": text only, colours from the theme
 	icon = "starburst", -- "starburst" (drawn), "glyph" (text), "none"
 	icon_size = nil, -- px; nil -> derived from the font size
-	glyph = "\u{f0e7}", -- used when icon = "glyph"
-	error_glyph = "\u{f071}",
+	glyph = "\239\131\167", -- U+F0E7, used when icon = "glyph"
+	error_glyph = "\239\129\177", -- U+F071
 	show_glyph = true, -- only for icon = "glyph"
 	format = nil, -- fun(state, fmt) -> plain text; nil for the default "5h 3% · 7d 67%"
 	compact = false, -- icon only; the chip fills up like a bar (style = "chip")
@@ -129,6 +129,15 @@ function M.resolve(opts, warn)
 		end
 		out.interval = 120
 	end
+	-- math.random() needs integer bounds on Lua 5.3+.
+	local jitter = out.jitter
+	if type(jitter) ~= "number" or jitter ~= jitter or jitter < 0 or jitter == math.huge then
+		if warn then
+			warn("jitter must be a number >= 0; using " .. M.defaults.jitter)
+		end
+		jitter = M.defaults.jitter
+	end
+	out.jitter = math.floor(jitter)
 	if type(out.backoff) ~= "table" or #out.backoff == 0 then
 		out.backoff = copy(M.defaults.backoff)
 	end

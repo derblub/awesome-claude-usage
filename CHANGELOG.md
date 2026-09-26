@@ -12,9 +12,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   abbreviated to the model's first letter: "5h 23% · 7d 53% · F 100%".
 - While extra usage is consumed the bar shows the amount ("+3.53€") instead of a bare " $";
   set `spend_flag = " $"` for the old marker.
+- Runs on Lua 5.1 and 5.2 as well; CI tests Lua 5.1, 5.3, 5.4 and LuaJIT, and `make test` runs
+  LuaJIT and Lua 5.1 in both test time zones.
+- The README lists every option with its default and explains `!parse`.
 
 ### Fixed
 - A used-up window showed "at this pace empty in expired" in the popup; it now says "limit reached".
+- Reset times were off by an hour near daylight saving time transitions.
+- Reading a large `~/.claude.json` is much faster, and escaped surrogate pairs decode correctly.
+- The access token no longer appears on curl's command line (it is passed in a short-lived mode 600
+  header file).
+- Threshold notifications repeated every minute once a window's reset time had passed.
+- The "three failures" error notification counts real checks only.
+- A window whose reset time has passed shows 0 % (assumed) instead of its old percentage.
+- Per-model limits are no longer carried over across a weekly reset.
+- Failed checks no longer add samples to the history.
+- The history file is capped at `MAX_SAMPLES` and rewritten atomically.
+- A missing `curl` no longer stops polling.
+- `stop()` also stops the cache watcher and ignores responses that arrive afterwards.
+- Compact mode shows the extra usage amount again.
+- Percentages are rounded down, so the number shown matches the chip colour at a threshold.
+- Per-model labels are readable when only a model id is known.
+- A pinned popup no longer swallows global key bindings.
+- The popup shows "Loading…" before the first check finishes.
+- `cli.lua` backs off after auth and parse errors, keeps curl's stderr out of its messages, records
+  only fresh data in the history and creates its cache directory with mode 700.
+- A non-integer `jitter` no longer stops polling.
 
 ## [0.5.3] - 2026-09-23
 

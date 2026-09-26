@@ -1,13 +1,13 @@
 -- normalize.lua - turn the three raw data formats into one canonical state table (pure Lua).
 --
 -- Canonical state (fields filled by model.lua are marked *):
---   five_hour  = { percent, resets_at, is_active } | nil
---   seven_day  = { percent, resets_at, is_active } | nil
---   scoped     = { { name, percent, resets_at, kind, is_active }, ... }
+--   five_hour  = { percent, resets_at, is_active, assumed } | nil
+--   seven_day  = { percent, resets_at, is_active, assumed } | nil
+--   scoped     = { { name, percent, resets_at, kind, is_active, assumed }, ... }
 --   spend      = { enabled, percent, used, currency, limit } | nil
 --   breakdown  = { { name, percent }, ... } | nil
 --   fetched_at = epoch
---   source*, stale*, error*, next_fetch_at*, subscription*
+--   source*, stale*, error*, next_fetch_at*, subscription*, fallback*
 
 local prefix = (...):match("^(.*%.)") or ""
 local timeparse = require(prefix .. "timeparse")
@@ -238,6 +238,41 @@ function M.from_claude_json(raw, now)
 		st.fetched_at = fetched
 	end
 	return st
+end
+
+local function expired(w, now)
+	return type(w) == "table" and w.resets_at ~= nil and w.resets_at <= now
+end
+
+--- Reset windows whose reset time has passed: 0 %, assumed, no reset time (like a window the
+--- statusLine dropped). Returns a shallow copy; the input and its windows are not modified.
+---@param st table|nil
+---@param now integer
+---@return table|nil state
+function M.expire(st, now)
+	if type(st) ~= "table" then
+		return st
+	end
+	local out = {}
+	for k, v in pairs(st) do
+		out[k] = v
+	end
+	for _, key in ipairs({ "five_hour", "seven_day" }) do
+		if expired(st[key], now) then
+			out[key] = { percent = 0, resets_at = nil, assumed = true }
+		end
+	end
+	if type(st.scoped) == "table" then
+		out.scoped = {}
+		for i, w in ipairs(st.scoped) do
+			if expired(w, now) then
+				out.scoped[i] = { name = w.name, kind = w.kind, percent = 0, resets_at = nil, assumed = true }
+			else
+				out.scoped[i] = w
+			end
+		end
+	end
+	return out
 end
 
 --- Whether the state carries at least one usage window.

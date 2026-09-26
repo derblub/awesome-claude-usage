@@ -13,7 +13,7 @@ function M.read(path)
 	if not f then
 		return nil
 	end
-	local content = f:read("a")
+	local content = f:read("*a")
 	f:close()
 	if not content or content == "" then
 		return nil
