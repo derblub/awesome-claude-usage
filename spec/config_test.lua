@@ -21,6 +21,18 @@ describe("config.resolve", function()
 		assert_eq(o.interval, 120)
 		assert_true(warned ~= nil)
 	end)
+	it("floors jitter and replaces invalid values with a warning", function()
+		assert_eq(config.resolve({ jitter = 7.5 }).jitter, 7)
+		assert_eq(config.resolve({ jitter = 0 }).jitter, 0)
+		for _, bad in ipairs({ -1, "10", 0 / 0, math.huge }) do
+			local warned
+			local o = config.resolve({ jitter = bad }, function(m)
+				warned = m
+			end)
+			assert_eq(o.jitter, config.defaults.jitter)
+			assert_true(warned ~= nil)
+		end
+	end)
 	it("does not mutate defaults", function()
 		config.resolve({ thresholds = { warn = 1 } })
 		assert_eq(config.defaults.thresholds.warn, 75)

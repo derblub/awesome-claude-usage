@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lua: ["5.4", "luajit-2.1"]
+        lua: ["5.1", "5.3", "5.4", "luajit-2.1"]
     steps:
       - uses: actions/checkout@v7
       - uses: leafo/gh-actions-lua@v13
@@ -34,4 +34,11 @@ jobs:
           luaVersion: ${{ matrix.lua }}
       - run: TZ=UTC lua spec/run.lua
       - run: TZ=Europe/Vienna lua spec/run.lua
-      - run: sh -n contrib/statusline-cache.sh
+      - run: for f in contrib/*.sh; do sh -n "$f" || exit 1; done
+      - name: shellcheck
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck contrib/*.sh
+          else
+            echo "shellcheck not installed, skipping"
+          fi

@@ -5,12 +5,15 @@ local json = require(root .. "json")
 
 local M = {}
 
+--- Seconds before expiresAt at which the token is treated as expired.
+M.SKEW = 60
+
 local function read_file(path)
 	local f = io.open(path, "r")
 	if not f then
 		return nil
 	end
-	local content = f:read("a")
+	local content = f:read("*a")
 	f:close()
 	return content
 end
@@ -18,8 +21,11 @@ end
 --- Read ~/.claude/.credentials.json.
 ---@param path string
 ---@param now integer
----@return table|nil creds  { token, expires_at, subscription, tier }
----@return table|nil err    { code, message, at }
+--- A token that expires within SKEW seconds already counts as expired. On expiry the third
+--- return value still carries the plan fields (without the token) so the plan name can be shown.
+---@return table|nil creds    { token, expires_at, subscription, tier }
+---@return table|nil err      { code, message, at }
+---@return table|nil partial  { expires_at, subscription, tier } when the token has expired
 function M.read(path, now)
 	local content = read_file(path)
 	if not content or content == "" then
@@ -37,8 +43,10 @@ function M.read(path, now)
 	if expires_at and expires_at > 1e11 then
 		expires_at = expires_at / 1000
 	end
-	if expires_at and expires_at <= now then
-		return nil, { code = "unauthorized", message = "access token expired", at = now }
+	if expires_at and expires_at - M.SKEW <= now then
+		return nil,
+			{ code = "unauthorized", message = "access token expired", at = now },
+			{ expires_at = expires_at, subscription = oauth.subscriptionType, tier = oauth.rateLimitTier }
 	end
 	return {
 		token = oauth.accessToken,

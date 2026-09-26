@@ -20,6 +20,21 @@ function M.round(x)
 	return math.floor(x + 0.5)
 end
 
+--- Integer percentage for display. Rounds down, so a shown value never crosses a threshold
+--- the raw value has not reached (89.5 stays "89%" below crit = 90, 99.5 is not "100%").
+function M.percent(x)
+	return math.floor(x + 1e-9)
+end
+
+--- Duration until `target` for texts like "resets in ...", nil when it is due or past
+--- (timeparse.relative says "expired" there; callers word that case themselves).
+local function time_until(target, now)
+	if type(target) ~= "number" or target < now then
+		return nil
+	end
+	return timeparse.relative(target, now)
+end
+
 --- Threshold level for a percentage.
 ---@param pct number|nil
 ---@param thresholds { warn: number, crit: number }
@@ -130,14 +145,59 @@ end
 
 local function pct_text(w)
 	if type(w) == "table" and type(w.percent) == "number" then
-		return string.format("%d%%", M.round(w.percent))
+		return string.format("%d%%", M.percent(w.percent))
 	end
 	return "--"
 end
 
---- First letter of a model name, to keep the bar short ("Fable" -> "F").
-local function short_name(name)
-	return tostring(name):match("^[%z\1-\127\194-\244][\128-\191]*") or tostring(name)
+--- UTF-8 characters of a model name for its bar label, without a "claude-" prefix and with the
+--- first letter uppercased ("claude-opus-5" -> O, p, u, s, -, 5).
+local function label_chars(name)
+	local s = tostring(name)
+	local family = s:match("^[Cc]laude%-(.+)$")
+	s = family or s
+	local chars = {}
+	for ch in s:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+		chars[#chars + 1] = ch
+	end
+	if chars[1] then
+		chars[1] = chars[1]:upper()
+	end
+	return chars
+end
+
+--- Short bar labels for model names: the first letter ("Fable" -> "F", "claude-opus-5" -> "O"),
+--- extended for names that would otherwise share a label ("Opus", "Omni" -> "Op", "Om").
+---@param names string[]
+---@return table labels  name -> label
+function M.short_names(names)
+	local chars, len, labels = {}, {}, {}
+	for i, name in ipairs(names) do
+		chars[i], len[i] = label_chars(name), 1
+	end
+	while true do
+		for i = 1, #names do
+			labels[i] = table.concat(chars[i], "", 1, math.min(len[i], #chars[i])):gsub("%s+$", "")
+		end
+		local grew = false
+		for i = 1, #names do
+			for j = 1, #names do
+				if i ~= j and labels[i] == labels[j] and names[i] ~= names[j] and len[i] < #chars[i] then
+					len[i] = len[i] + 1
+					grew = true
+					break
+				end
+			end
+		end
+		if not grew then
+			break
+		end
+	end
+	local out = {}
+	for i, name in ipairs(names) do
+		out[name] = labels[i]
+	end
+	return out
 end
 
 --- Plain text for the bar (no markup; the widget escapes it).
@@ -164,14 +224,34 @@ function M.bar_text(st, opts)
 	end
 	local parts = {}
 	if not opts.compact then
-		for _, key in ipairs(opts.bar_windows or { "five_hour", "seven_day", "scoped" }) do
+		local keys = opts.bar_windows or { "five_hour", "seven_day", "scoped" }
+		-- labels are only made unique among the models actually shown
+		local names, seen = {}, {}
+		local function add_name(name)
+			name = tostring(name)
+			if not seen[name] then
+				seen[name] = true
+				names[#names + 1] = name
+			end
+		end
+		for _, key in ipairs(keys) do
 			if key == "scoped" then
 				for _, w in ipairs(st.scoped or {}) do
-					parts[#parts + 1] = short_name(w.name) .. " " .. pct_text(w)
+					add_name(w.name)
+				end
+			elseif key:match("^scoped:(.+)$") then
+				add_name(key:match("^scoped:(.+)$"))
+			end
+		end
+		local short = M.short_names(names)
+		for _, key in ipairs(keys) do
+			if key == "scoped" then
+				for _, w in ipairs(st.scoped or {}) do
+					parts[#parts + 1] = short[tostring(w.name)] .. " " .. pct_text(w)
 				end
 			else
 				local name = key:match("^scoped:(.+)$")
-				local label = key == "five_hour" and "5h" or key == "seven_day" and "7d" or name and short_name(name) or key
+				local label = key == "five_hour" and "5h" or key == "seven_day" and "7d" or name and short[name] or key
 				parts[#parts + 1] = label .. " " .. pct_text(M.window(st, key))
 			end
 		end
@@ -180,7 +260,7 @@ function M.bar_text(st, opts)
 	local spending = st.spend and st.spend.enabled and ((st.spend.percent or 0) > 0 or (st.spend.used or 0) > 0)
 	if opts.spend_in_bar and spending then
 		local amount = (st.spend.used or 0) > 0 and M.money(st.spend.used, st.spend.currency):gsub(" ", "")
-			or string.format("%d%%", M.round(st.spend.percent or 0))
+			or string.format("%d%%", M.percent(st.spend.percent or 0))
 		text = text .. (opts.spend_flag or (" +" .. amount))
 	end
 	if opts.sessions_in_bar and st.sessions and (st.sessions.attention or 0) > 0 then
@@ -220,7 +300,7 @@ function M.forecast_text(fc, now)
 	if fc.exhaust_at then
 		local left = fc.exhaust_at - now
 		local level = left < 3600 and "crit" or "warn"
-		return "at this pace empty in " .. (timeparse.relative(fc.exhaust_at, now) or "?"), level
+		return "at this pace empty in " .. (time_until(fc.exhaust_at, now) or "?"), level
 	end
 	if fc.at_reset then
 		if fc.rate == 0 then
@@ -284,7 +364,10 @@ function M.error_text(err, now)
 	elseif code == "no_credentials" then
 		return "No Claude Code credentials found – log in with `claude`"
 	elseif code == "rate_limited" then
-		local rem = err.retry_at and timeparse.relative(err.retry_at, now)
+		local rem = time_until(err.retry_at, now)
+		if err.retry_at and not rem then
+			return "Rate limited (429), retry due"
+		end
 		return "Rate limited (429)" .. (rem and (", retry in " .. rem) or "")
 	elseif code == "network" then
 		return "Network error" .. (err.message and (": " .. err.message) or "")
@@ -296,23 +379,30 @@ function M.error_text(err, now)
 	return err.message or tostring(code)
 end
 
+--- "resets in 2h 14m", "reset due" (in the past), "resets at <date>" (implausibly far away),
+--- "no usage yet" (window not started) or nil.
+local function reset_text(w, now)
+	if w and w.assumed then
+		return "no usage yet"
+	end
+	if not w or not w.resets_at then
+		return nil
+	end
+	local d = w.resets_at - now
+	if d < 0 then
+		return "reset due"
+	elseif d > 8 * 86400 then
+		return "resets at " .. timeparse.absolute(w.resets_at)
+	end
+	return "resets in " .. time_until(w.resets_at, now)
+end
+
 local function window_line(label, w, now)
 	if not w then
 		return nil
 	end
-	local parts = { string.format("%s: %d%%", label, M.round(w.percent)) }
-	if w.assumed then
-		parts[#parts + 1] = "no usage yet"
-	elseif w.resets_at then
-		local d = w.resets_at - now
-		if d > 8 * 86400 or d < -86400 then
-			parts[#parts + 1] = "resets at " .. timeparse.absolute(w.resets_at)
-		elseif d < 0 then
-			parts[#parts + 1] = "reset due"
-		else
-			parts[#parts + 1] = "resets in " .. timeparse.relative(w.resets_at, now)
-		end
-	end
+	local parts = { string.format("%s: %d%%", label, M.percent(w.percent)) }
+	parts[#parts + 1] = reset_text(w, now)
 	local line = table.concat(parts, " – ")
 	if w.is_active then
 		line = line .. " *"
@@ -376,7 +466,7 @@ function M.popup_lines(st, now, opts)
 			elseif used then
 				text = text .. used
 			end
-			text = text .. string.format(" (%d%%)", M.round(st.spend.percent or 0))
+			text = text .. string.format(" (%d%%)", M.percent(st.spend.percent or 0))
 			lines[#lines + 1] = text
 		end
 	else
@@ -405,7 +495,8 @@ function M.popup_lines(st, now, opts)
 		lines[#lines + 1] = prefix_text .. (M.error_text(st.error, now) or "error")
 	end
 	if st.next_fetch_at then
-		lines[#lines + 1] = "Next check in " .. (timeparse.relative(st.next_fetch_at, now) or "?")
+		local rel = time_until(st.next_fetch_at, now)
+		lines[#lines + 1] = rel and ("Next check in " .. rel) or "Checking…"
 	end
 	return lines
 end
@@ -433,22 +524,6 @@ function M.plan_name(subscription)
 		return nil
 	end
 	return (SUBSCRIPTION_NAME[subscription:lower()] or subscription) .. " plan"
-end
-
-local function reset_text(w, now)
-	if w and w.assumed then
-		return "no usage yet"
-	end
-	if not w or not w.resets_at then
-		return nil
-	end
-	local d = w.resets_at - now
-	if d > 8 * 86400 or d < -86400 then
-		return "resets at " .. timeparse.absolute(w.resets_at)
-	elseif d < 0 then
-		return "reset due"
-	end
-	return "resets in " .. timeparse.relative(w.resets_at, now)
 end
 
 --- Structured content for the graphical popup.
@@ -544,7 +619,8 @@ function M.popup_rows(st, now, opts)
 		rows.error = M.error_text(st.error, now)
 	end
 	if st.next_fetch_at then
-		rows.footer[#rows.footer + 1] = "next check in " .. (timeparse.relative(st.next_fetch_at, now) or "?")
+		local rel = time_until(st.next_fetch_at, now)
+		rows.footer[#rows.footer + 1] = rel and ("next check in " .. rel) or "checking…"
 	end
 	return rows
 end

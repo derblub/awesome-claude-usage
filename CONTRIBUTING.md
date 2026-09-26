@@ -19,10 +19,13 @@ Add the AwesomeWM version (`awesome --version`) and the Claude Code version
 ```sh
 git clone https://github.com/derblub/awesome-claude-usage.git
 cd awesome-claude-usage
-make          # luacheck + tests on Lua 5.4 and LuaJIT
+make          # luacheck + tests on Lua 5.4, LuaJIT and Lua 5.1
 ```
 
-- `make test` needs `lua5.4` (or set `LUA=lua`) and optionally `luajit`; no LuaRocks packages.
+- `make test` needs `lua5.4` (or set `LUA=lua`) and optionally `luajit` and `lua5.1` (skipped when
+  missing), each run under `TZ=UTC` and `TZ=Europe/Vienna`; no LuaRocks packages.
+- The code must run on Lua 5.1 to 5.4 and LuaJIT: no `\u{...}` escapes (use decimal byte escapes),
+  `read("*a")` instead of `read("a")`, no integer division `//` or bitwise operators.
 - `make lint` needs [luacheck](https://github.com/lunarmodules/luacheck).
 - Tests live in `spec/` and use the tiny runner in `spec/run.lua`
   (`describe`, `it`, `assert_eq`, `assert_true`, `assert_nil`, `assert_error`).

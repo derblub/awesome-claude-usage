@@ -15,6 +15,15 @@ local history = require(prefix .. "history")
 
 local M = {}
 
+-- Keys that only modify another key; pressing them does not end the pinned popup's key grab.
+local MODIFIER_KEYS = {
+	Caps_Lock = true,
+	Num_Lock = true,
+	ISO_Level3_Shift = true,
+	ISO_Level5_Shift = true,
+	Mode_switch = true,
+}
+
 local function esc(s)
 	return gears.string.xml_escape(tostring(s or ""))
 end
@@ -79,7 +88,7 @@ function M.build(rows, opts, samples)
 	local function bar_row(label, subtext, percent, level, right_text, note, extra)
 		extra = extra or {}
 		local color = level_color(level)
-		local pct_markup = percent and span(string.format("%d%%", format.round(percent)), color, ' font_weight="bold"')
+		local pct_markup = percent and span(string.format("%d%%", format.percent(percent)), color, ' font_weight="bold"')
 			or span("--", c.muted)
 		local head = wibox.widget({
 			{
@@ -255,23 +264,48 @@ function M.attach(widget, model, opts)
 
 	local function start_grabs()
 		if opts.popup_escape ~= false and not keygrabber then
+			-- Escape closes the popup. Any other key (modifiers aside) ends the grab and is
+			-- replayed, so global bindings such as the one for toggle_popup() keep working.
+			local passing = false
 			keygrabber = awful.keygrabber({
 				stop_key = "Escape",
 				stop_event = "press",
 				autostart = true,
+				keypressed_callback = function(self, mods, key)
+					if key == "Escape" or MODIFIER_KEYS[key] or key:match("^[%a_]+_[LR]$") then
+						return
+					end
+					passing = true
+					self:stop()
+					gears.timer.delayed_call(awful.key.execute, mods, key)
+				end,
 				stop_callback = function()
 					keygrabber = nil
-					handle:hide()
+					if not passing then
+						handle:hide()
+					end
 				end,
 			})
 		end
 		if opts.popup_click_away ~= false and not grabbing_mouse then
 			grabbing_mouse = true
+			-- Buttons still held from the click that pinned the popup do not count until released.
+			local held = {}
+			for i, down in pairs(mouse.coords().buttons or {}) do
+				held[i] = down or nil
+			end
 			mousegrabber.run(function(m)
-				if m.buttons[1] or m.buttons[2] or m.buttons[3] then
-					grabbing_mouse = false
-					handle:hide()
-					return false
+				for i in pairs(held) do
+					if not m.buttons[i] then
+						held[i] = nil
+					end
+				end
+				for i = 1, 3 do
+					if m.buttons[i] and not held[i] then
+						grabbing_mouse = false
+						handle:hide()
+						return false
+					end
 				end
 				return grabbing_mouse
 			end, "left_ptr")
@@ -282,6 +316,10 @@ function M.attach(widget, model, opts)
 		local p = ensure_popup()
 		if not unsub then
 			unsub = model.subscribe(fill)
+			if model.state == nil then
+				-- subscribe only calls back once there is a state; show "Loading…" until then
+				fill(nil)
+			end
 		else
 			fill(model.state)
 		end

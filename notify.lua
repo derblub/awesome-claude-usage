@@ -18,6 +18,8 @@ function M.new(opts, deps)
 		windows = {}, -- key -> { level, percent, resets_at }
 		fail_count = 0,
 		error_notified = false,
+		last_error = nil, -- error table of the last counted failure (re-emits of a state share it)
+		last_error_at = nil,
 		last_attention = {}, -- session key -> epoch of the last attention notification
 	}, Notifier)
 end
@@ -60,22 +62,25 @@ function Notifier:check_window(key, label, w, now)
 	local stored = self.windows[key]
 
 	if stored then
-		local reset = (stored.resets_at ~= nil and now > stored.resets_at)
-			or (w.resets_at ~= nil and stored.resets_at ~= nil and w.resets_at > stored.resets_at)
+		-- A new cycle shows up as a later resets_at (or a big drop); the clock alone is not a reset,
+		-- otherwise a stale past resets_at would re-trigger the notification on every redraw.
+		local reset = (w.resets_at ~= nil and stored.resets_at ~= nil and w.resets_at > stored.resets_at)
 			or (stored.percent - w.percent > 20)
 		if reset then
 			if self.opts.notify_reset and stored.level ~= "normal" and level == "normal" then
-				self:emit({ message = label .. " window reset, now at " .. format.round(w.percent) .. "%" })
+				self:emit({ message = label .. " window reset, now at " .. format.percent(w.percent) .. "%" })
 			end
 			stored = nil
 		end
 	end
 	stored = stored or { level = "normal", percent = w.percent, resets_at = w.resets_at }
 
-	if rank[level] > rank[stored.level] and self.opts.notify_threshold then
-		local msg = string.format("%s at %d%%", label, format.round(w.percent))
+	-- A window whose resets_at already passed is stale data: record it, but stay quiet.
+	local expired = w.resets_at ~= nil and w.resets_at <= now
+	if rank[level] > rank[stored.level] and self.opts.notify_threshold and not expired then
+		local msg = string.format("%s at %d%%", label, format.percent(w.percent))
 		local rel = w.resets_at and format.relative(w.resets_at, now)
-		if rel then
+		if rel and rel ~= "expired" then
 			msg = msg .. " (resets in " .. rel .. ")"
 		end
 		self:emit({ message = msg, urgency = level == "crit" and "critical" or "normal" })
@@ -112,8 +117,17 @@ function Notifier:update(st, now)
 	if has then
 		self.fail_count = 0
 		self.error_notified = false
+		self.last_error = nil
+		self.last_error_at = nil
 	elseif st.error then
-		self.fail_count = self.fail_count + 1
+		-- redraw/poll_sessions re-emit the same state (same error table) every minute; count each
+		-- failed check once.
+		local at = type(st.error) == "table" and st.error.at or nil
+		if st.error ~= self.last_error or at ~= self.last_error_at then
+			self.fail_count = self.fail_count + 1
+		end
+		self.last_error = st.error
+		self.last_error_at = at
 		if self.opts.notify_error and self.fail_count >= 3 and not self.error_notified then
 			self:emit({ message = format.error_text(st.error, now) or "usage fetch failed", urgency = "normal" })
 			self.error_notified = true

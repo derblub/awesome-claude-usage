@@ -40,6 +40,46 @@ describe("history.append/load", function()
 		assert_eq(#samples, 2)
 		assert_eq(#history.load(TMP), 2)
 	end)
+	it("caps the list with hysteresis", function()
+		local samples = fresh()
+		local saved = history.MAX_SAMPLES
+		history.MAX_SAMPLES = 8
+		for t = 1, 8 do
+			history.append(TMP, samples, { five_hour = { percent = t } }, t)
+		end
+		assert_eq(#samples, 8)
+		-- ninth sample: all within MAX_AGE, so keep the newest floor(8 * 3 / 4) = 6
+		assert_true(history.append(TMP, samples, { five_hour = { percent = 9 } }, 9))
+		assert_eq(#samples, 6)
+		assert_eq(samples[1].t, 4)
+		assert_eq(samples[6].t, 9)
+		local loaded = history.load(TMP)
+		assert_eq(#loaded, 6)
+		assert_eq(loaded[1].t, 4)
+		-- the next two appends only append
+		history.append(TMP, samples, { five_hour = { percent = 10 } }, 10)
+		history.append(TMP, samples, { five_hour = { percent = 11 } }, 11)
+		assert_eq(#samples, 8)
+		assert_eq(#history.load(TMP), 8)
+		history.MAX_SAMPLES = saved
+	end)
+	it("leaves no temp files and keeps the file when a rewrite fails", function()
+		local samples = fresh()
+		local saved = history.MAX_SAMPLES
+		history.MAX_SAMPLES = 2
+		history.append(TMP, samples, { five_hour = { percent = 1 } }, 1)
+		history.append(TMP, samples, { five_hour = { percent = 2 } }, 2)
+		local other = {}
+		assert_eq(history.append("spec/tmp/no-such-dir/h.csv", other, { five_hour = { percent = 1 } }, 1), false)
+		-- third sample: rewrite down to floor(2 * 3 / 4) = 1
+		assert_true(history.append(TMP, samples, { five_hour = { percent = 3 } }, 3))
+		history.MAX_SAMPLES = saved
+		local p = io.popen("ls spec/tmp")
+		local listing = p:read("*a")
+		p:close()
+		assert_nil(listing:find("history_test.csv.tmp", 1, true))
+		assert_eq(#history.load(TMP), 1)
+	end)
 end)
 
 describe("history.rate/forecast/pace", function()

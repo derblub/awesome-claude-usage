@@ -156,15 +156,15 @@ function M.new(model, opts)
 				text = string.format('<span foreground="%s">%s</span>', color, text)
 			end
 		end
-		textbox:set_markup(text)
 		if opts.compact then
-			-- keep the flags visible even in compact mode
-			local flags = text:match("[%$\u{2691}!]+%s*$")
-			textbox.visible = flags ~= nil
-			if flags then
-				textbox:set_markup(flags)
+			-- In compact mode bar_text holds only the flags (spend amount, attention); keep them
+			-- visible. Loading and error texts stay hidden, the chip colour shows those.
+			if not format.has_data(state) then
+				text = ""
 			end
+			textbox.visible = text ~= ""
 		end
+		textbox:set_markup(text)
 	end
 
 	render(model.state)

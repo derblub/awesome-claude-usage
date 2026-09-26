@@ -1,4 +1,6 @@
--- Vendored from https://github.com/rxi/json.lua (v0.1.2), MIT license, unmodified.
+-- Vendored from https://github.com/rxi/json.lua (v0.1.2), MIT license, modified:
+-- parse_string collects chunks in a table and skips to the next special character,
+-- lone or mismatched UTF-16 surrogates decode to U+FFFD, and json.decode_at was added.
 --
 -- json.lua
 --
@@ -194,47 +196,55 @@ end
 local function parse_unicode_escape(s)
 	local n1 = tonumber(s:sub(1, 4), 16)
 	local n2 = tonumber(s:sub(7, 10), 16)
-	-- Surrogate pair?
+	-- Surrogate pair? (the pattern in parse_string only matches a high + low pair)
 	if n2 then
 		return codepoint_to_utf8((n1 - 0xd800) * 0x400 + (n2 - 0xdc00) + 0x10000)
+	elseif n1 >= 0xd800 and n1 <= 0xdfff then
+		return "\239\191\189" -- unpaired surrogate: U+FFFD replacement character
 	else
 		return codepoint_to_utf8(n1)
 	end
 end
 
 local function parse_string(str, i)
-	local res = ""
+	local res = {}
+	local n = 0
 	local j = i + 1
-	local k = j
 
-	while j <= #str do
-		local x = str:byte(j)
-
-		if x < 32 then
-			decode_error(str, j, "control character in string")
-		elseif x == 92 then -- `\`: Escape
-			res = res .. str:sub(k, j - 1)
-			j = j + 1
-			local c = str:sub(j, j)
-			if c == "u" then
-				local hex = str:match("^[dD][89aAbB]%x%x\\u%x%x%x%x", j + 1)
-					or str:match("^%x%x%x%x", j + 1)
-					or decode_error(str, j - 1, "invalid unicode escape in string")
-				res = res .. parse_unicode_escape(hex)
-				j = j + #hex
-			else
-				if not escape_chars[c] then
-					decode_error(str, j - 1, "invalid escape char '" .. c .. "' in string")
-				end
-				res = res .. escape_char_map_inv[c]
-			end
-			k = j + 1
-		elseif x == 34 then -- `"`: End of string
-			res = res .. str:sub(k, j - 1)
-			return res, j + 1
+	while true do
+		-- Jump to the next quote, backslash or control character
+		local x = str:find('[%z\1-\31\\"]', j)
+		if not x then
+			break
 		end
+		if x > j then
+			n = n + 1
+			res[n] = str:sub(j, x - 1)
+		end
+		local c = str:byte(x)
 
-		j = j + 1
+		if c == 34 then -- `"`: End of string
+			return table.concat(res), x + 1
+		elseif c == 92 then -- `\`: Escape
+			local e = str:sub(x + 1, x + 1)
+			if e == "u" then
+				local hex = str:match("^[dD][89aAbB]%x%x\\u[dD][c-fC-F]%x%x", x + 2)
+					or str:match("^%x%x%x%x", x + 2)
+					or decode_error(str, x, "invalid unicode escape in string")
+				n = n + 1
+				res[n] = parse_unicode_escape(hex)
+				j = x + 2 + #hex
+			else
+				if not escape_chars[e] then
+					decode_error(str, x, "invalid escape char '" .. e .. "' in string")
+				end
+				n = n + 1
+				res[n] = escape_char_map_inv[e]
+				j = x + 2
+			end
+		else
+			decode_error(str, x, "control character in string")
+		end
 	end
 
 	decode_error(str, i, "expected closing quote for string")
@@ -368,6 +378,19 @@ function json.decode(str)
 		decode_error(str, idx, "trailing garbage")
 	end
 	return res
+end
+
+--- Decode a single JSON value that starts at byte `idx` (leading whitespace is skipped).
+--- Unlike json.decode, anything after the value is left alone.
+---@param str string
+---@param idx integer
+---@return any value
+---@return integer next_idx  index of the first byte after the value
+function json.decode_at(str, idx)
+	if type(str) ~= "string" then
+		error("expected argument of type string, got " .. type(str))
+	end
+	return parse(str, next_char(str, idx or 1, space_chars, true))
 end
 
 return json

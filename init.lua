@@ -12,7 +12,8 @@
 --   claude_usage.stop()
 --   claude_usage.format           -> text helpers (popup_lines, bar_text, relative, ...)
 
-local prefix = (...) .. "."
+local modname = ...
+local prefix = modname .. "."
 local config = require(prefix .. "config")
 local model = require(prefix .. "model")
 local format = require(prefix .. "format")
@@ -35,6 +36,7 @@ local function warn(msg)
 end
 
 --- Watch the cache file's directory with inotifywait; calls cb on every rewrite.
+--- Returns a function that stops the watcher.
 local function watch_file(path, cb)
 	local awful = require("awful")
 	local dir, name = path:match("^(.*)/([^/]+)$")
@@ -66,9 +68,14 @@ local function watch_file(path, cb)
 	if type(pid) ~= "number" then
 		error("cannot start inotifywait: " .. tostring(pid))
 	end
-	awesome.connect_signal("exit", function()
+	local function on_exit()
 		awesome.kill(pid, 9)
-	end)
+	end
+	awesome.connect_signal("exit", on_exit)
+	return function()
+		awesome.disconnect_signal("exit", on_exit)
+		awesome.kill(pid, 15)
+	end
 end
 
 local function real_deps()
@@ -78,8 +85,9 @@ local function real_deps()
 	return {
 		watch = watch_file,
 		now = os.time,
+		-- easy_async returns the pid, or an error string when the program cannot be started
 		spawn = function(argv, cb)
-			awful.spawn.easy_async(argv, cb)
+			return awful.spawn.easy_async(argv, cb)
 		end,
 		timer = function(args)
 			return gears.timer(args)
@@ -203,6 +211,15 @@ function M.refresh(args)
 end
 
 function M.stop()
+	-- Close open or pinned popups first; they would stay on screen (and keep their grabbers).
+	for _, w in ipairs(_widgets) do
+		if w.popup then
+			local ok, err = pcall(w.popup.hide, w.popup)
+			if not ok then
+				warn("cannot hide the popup: " .. tostring(err))
+			end
+		end
+	end
 	model.stop()
 	M.opts = nil
 	_widgets = {}
@@ -220,13 +237,13 @@ function M.debug()
 	local o = M.opts
 	if o then
 		lines[#lines + 1] = string.format(
-			"options: style=%s icon=%s interval=%d sources=%s thresholds=%d/%d popup=%s",
+			"options: style=%s icon=%s interval=%s sources=%s thresholds=%s/%s popup=%s",
 			tostring(o.style),
 			tostring(o.icon),
-			o.interval,
+			tostring(o.interval),
 			table.concat(o.sources, ","),
-			o.thresholds.warn,
-			o.thresholds.crit,
+			tostring(o.thresholds.warn),
+			tostring(o.thresholds.crit),
 			tostring(o.popup)
 		)
 	else
@@ -263,5 +280,11 @@ setmetatable(M, {
 		return nil
 	end,
 })
+
+-- contrib/claude-usage-hook.sh and the README reach the widget as require("claude_usage");
+-- make that work when the module was installed under another name.
+if modname ~= "claude_usage" then
+	package.loaded["claude_usage"] = package.loaded["claude_usage"] or M
+end
 
 return M

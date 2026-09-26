@@ -58,20 +58,40 @@ local function windows_of(state)
 	return out
 end
 
+local function format_sample(s)
+	return string.format("%d,%s,%s,%s\n", s.t, s.key, tostring(s.percent), s.resets_at and tostring(s.resets_at) or "")
+end
+
+local tmp_counter = 0
+
+-- Write to a unique temp file next to `path` and rename it over the target only on success.
 local function write_all(path, samples)
-	local f = io.open(path, "w")
+	tmp_counter = tmp_counter + 1
+	local tmp = string.format("%s.tmp.%d.%d.%s", path, os.time(), tmp_counter, tostring({}):match("(%x+)$") or "")
+	local f = io.open(tmp, "w")
 	if not f then
 		return false
 	end
+	local ok = true
 	for _, s in ipairs(samples) do
-		f:write(string.format("%d,%s,%s,%s\n", s.t, s.key, tostring(s.percent), s.resets_at and tostring(s.resets_at) or ""))
+		if not f:write(format_sample(s)) then
+			ok = false
+			break
+		end
 	end
-	f:close()
+	if not f:close() then
+		ok = false
+	end
+	if not ok or not os.rename(tmp, path) then
+		os.remove(tmp)
+		return false
+	end
 	return true
 end
 
 --- Record the windows of a state. Appends to `samples` in memory and to the file;
---- rewrites the file (pruning old samples) when it grows large.
+--- rewrites the file when it grows past MAX_SAMPLES, pruning by age and then down to 3/4 of
+--- MAX_SAMPLES so the next full rewrite is ~MAX_SAMPLES/4 samples away.
 ---@param path string
 ---@param samples table in-memory list from load()
 ---@param state table
@@ -97,11 +117,13 @@ function M.append(path, samples, state, now)
 				kept[#kept + 1] = s
 			end
 		end
+		local keep = math.floor(M.MAX_SAMPLES * 3 / 4)
+		local first = math.max(#kept - keep, 0)
 		for i = #samples, 1, -1 do
 			samples[i] = nil
 		end
-		for i, s in ipairs(kept) do
-			samples[i] = s
+		for i = first + 1, #kept do
+			samples[#samples + 1] = kept[i]
 		end
 		return write_all(path, samples)
 	end
@@ -109,11 +131,13 @@ function M.append(path, samples, state, now)
 	if not f then
 		return false
 	end
+	local ok = true
 	for _, s in ipairs(new) do
-		f:write(string.format("%d,%s,%s,%s\n", s.t, s.key, tostring(s.percent), s.resets_at and tostring(s.resets_at) or ""))
+		if not f:write(format_sample(s)) then
+			ok = false
+		end
 	end
-	f:close()
-	return true
+	return f:close() and ok or false
 end
 
 --- Samples of one key since a point in time.

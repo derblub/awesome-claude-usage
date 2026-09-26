@@ -11,6 +11,117 @@ describe("source.api.argv", function()
 		assert_eq(argv[8], "anthropic-beta: oauth-2025-04-20")
 		assert_eq(argv[#argv], "http://x/usage")
 	end)
+	it("reads the Authorization header from a file when given one", function()
+		local argv = api.argv(config.resolve({ api_url = "http://x/usage" }), "TOK", "/run/h")
+		assert_eq(argv[6], "@/run/h")
+		for _, a in ipairs(argv) do
+			assert_nil(a:find("TOK", 1, true), "token on argv")
+		end
+	end)
+end)
+
+describe("source.api header file", function()
+	it("prefers XDG_RUNTIME_DIR and falls back to the cache dir", function()
+		local opts = { cache_path = "/c/claude-usage/rate_limits.json" }
+		assert_eq(api.header_dir(opts, function()
+			return "/run/user/1"
+		end), "/run/user/1/claude-usage")
+		assert_eq(api.header_dir(opts, function()
+			return nil
+		end), "/c/claude-usage")
+	end)
+	it("writes a private header file", function()
+		local dir = "spec/tmp/hdr dir'x"
+		local path = assert(api.write_header(dir, "TOK"))
+		local f = io.open(path, "r")
+		assert_eq(f:read("*a"), "Authorization: Bearer TOK\n")
+		f:close()
+		local p = io.popen("stat -c %a " .. "'spec/tmp/hdr dir'\\''x' '" .. path:gsub("'", "'\\''") .. "'")
+		local modes = p:read("*a")
+		p:close()
+		assert_eq(modes, "700\n600\n")
+		local second = assert(api.write_header(dir, "TOK"))
+		assert_true(second ~= path, "unique names")
+		os.remove(path)
+		os.remove(second)
+		os.remove(dir)
+	end)
+end)
+
+describe("source.api.fetch", function()
+	local opts = config.resolve({ api_url = "http://x/usage", cache_path = "spec/tmp/api/rate_limits.json" })
+	local function deps(spawn)
+		local d = { removed = {} }
+		d.now = function()
+			return 5
+		end
+		d.write_header = function(dir, token)
+			d.header_dir = dir
+			return "/fake/hdr-" .. token
+		end
+		d.remove = function(path)
+			d.removed[#d.removed + 1] = path
+		end
+		d.spawn = spawn
+		return d
+	end
+	it("passes the header file and removes it after the run", function()
+		local seen
+		local d = deps(function(argv, cb)
+			seen = argv
+			cb('{"a":1}\n200', "", "exit", 0)
+			return 42
+		end)
+		local got
+		api.fetch(opts, d, "TOK", function(ok, res)
+			got = { ok = ok, res = res }
+		end)
+		assert_eq(seen[6], "@/fake/hdr-TOK")
+		assert_true(got.ok)
+		assert_eq(got.res.a, 1)
+		assert_eq(#d.removed, 1)
+		assert_eq(d.removed[1], "/fake/hdr-TOK")
+	end)
+	it("treats a string from spawn as a failure and cleans up", function()
+		local calls = 0
+		local got
+		local d = deps(function()
+			return "No such file or directory"
+		end)
+		api.fetch(opts, d, "TOK", function(ok, res)
+			calls = calls + 1
+			got = { ok = ok, res = res }
+		end)
+		assert_eq(calls, 1)
+		assert_eq(got.ok, false)
+		assert_eq(got.res.code, "network")
+		assert_eq(got.res.message, "cannot run curl: No such file or directory")
+		assert_eq(d.removed[1], "/fake/hdr-TOK")
+	end)
+	it("cleans up when spawn throws", function()
+		local got
+		local d = deps(function()
+			error("boom")
+		end)
+		api.fetch(opts, d, "TOK", function(ok, res)
+			got = { ok = ok, res = res }
+		end)
+		assert_eq(got.ok, false)
+		assert_eq(got.res.code, "network")
+		assert_eq(#d.removed, 1)
+	end)
+	it("falls back to the argv header when the file cannot be written", function()
+		local seen
+		local d = deps(function(argv)
+			seen = argv
+		end)
+		d.write_header = function()
+			return nil, "read-only"
+		end
+		api.fetch(opts, d, "TOK", function() end)
+		assert_eq(seen[6], "Authorization: Bearer TOK")
+		assert_eq(#d.removed, 0)
+	end)
 end)
 
 describe("source.api.interpret", function()

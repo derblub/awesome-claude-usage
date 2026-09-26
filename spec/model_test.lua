@@ -43,7 +43,7 @@ describe("model", function()
 		local deps, opts = setup()
 		deps.timers[1]:fire()
 		assert_eq(#deps.spawned, 1)
-		assert_eq(deps.spawned[1].argv[6], "Authorization: Bearer REDACTED-TOKEN")
+		assert_eq(H.auth_header(deps, deps.spawned[1].argv), "Authorization: Bearer REDACTED-TOKEN")
 		H.respond(deps, API_BODY, 200)
 		assert_eq(model.state.source, "api")
 		assert_eq(model.state.seven_day.percent, 67)
@@ -86,6 +86,7 @@ describe("model", function()
 		assert_eq(#deps.spawned, 0)
 		assert_eq(model.state.error.code, "unauthorized")
 		assert_eq(model.state.five_hour.percent, 23.5)
+		assert_eq(model.state.subscription, "pro", "plan name from the expired credentials")
 	end)
 
 	it("uses ~/.claude.json when the statusline cache is missing and flags it stale", function()
@@ -198,15 +199,12 @@ describe("model (cache preference, sessions, history)", function()
 		assert_true(model.state.breakdown ~= nil)
 		-- after interval_idle the API is asked again even though the cache is fresh
 		deps.t = 1758560000 - 100 + 901
-		local later = io.open("spec/tmp/fresh_cache.json", "w")
-		later:write('{"ts":' .. deps.t .. ',"rate_limits":{"five_hour":{"used_percentage":1},'
-			.. '"seven_day":{"used_percentage":2}}}')
+		local later = io.open("spec/tmp/same_cycle.json", "w")
+		later:write('{"ts":' .. deps.t .. ',"rate_limits":{"five_hour":{"used_percentage":1,"resets_at":1758570000},'
+			.. '"seven_day":{"used_percentage":2,"resets_at":1790175600}}}')
 		later:close()
-		model.stop()
-		local deps2 = setup({ fresh_cache_max_age = 120, interval_idle = 900, cache_path = "spec/tmp/fresh_cache.json" })
-		deps2.t = deps.t
-		deps2.timers[1]:fire()
-		assert_eq(#deps2.spawned, 1, "no recent API answer -> API is called")
+		deps.timers[1]:fire()
+		assert_eq(#deps.spawned, 2, "no recent API answer -> API is called")
 	end)
 
 	it("polls slowly while no session works and fast while one does", function()
@@ -301,6 +299,13 @@ describe("model (hook, cache watch)", function()
 			fresh_cache_max_age = 120,
 			watch_cache = true,
 		})
+		local unwatched = 0
+		deps.watch = function(path, cb)
+			watched = { path = path, cb = cb }
+			return function()
+				unwatched = unwatched + 1
+			end
+		end
 		model.setup(opts, deps)
 		assert_true(watched ~= nil and watched.path == "spec/fixtures/statusline.json")
 		deps.t = 1758560000 - 60
@@ -316,6 +321,8 @@ describe("model (hook, cache watch)", function()
 		local before = deps.timers[1].again_calls
 		watched.cb()
 		assert_eq(deps.timers[1].again_calls, before)
+		model.stop()
+		assert_eq(unwatched, 1, "stop() ends the cache watch")
 	end)
 
 	it("notifies once from a hook and rescans sessions", function()
@@ -352,5 +359,219 @@ describe("model (hook, cache watch)", function()
 		model.hook("Stop", "", "sess-7")
 		assert_eq(#deps.notifications, 1)
 		os.remove(dir .. "/7.json")
+	end)
+end)
+
+local WEEK_RESET = 1790175600 -- seven_day.resets_at of the API fixture (2026-09-23T15:00Z)
+
+local function write_cache(path, body)
+	local f = assert(io.open(path, "w"))
+	f:write(body)
+	f:close()
+end
+
+describe("normalize.expire", function()
+	local normalize = require("normalize")
+	it("zeroes past windows on a copy", function()
+		local st = {
+			five_hour = { percent = 40, resets_at = 100 },
+			seven_day = { percent = 70, resets_at = 500 },
+			scoped = { { name = "Fable", percent = 50, resets_at = 100, kind = "weekly_scoped" }, { name = "O", percent = 1 } },
+			source = "api",
+		}
+		local out = normalize.expire(st, 100)
+		assert_eq(out.five_hour.percent, 0)
+		assert_true(out.five_hour.assumed)
+		assert_nil(out.five_hour.resets_at)
+		assert_eq(out.seven_day, st.seven_day)
+		assert_eq(out.scoped[1].name, "Fable")
+		assert_eq(out.scoped[1].percent, 0)
+		assert_true(out.scoped[1].assumed)
+		assert_eq(out.scoped[2], st.scoped[2])
+		assert_eq(out.source, "api")
+		assert_eq(st.five_hour.percent, 40, "input untouched")
+		assert_eq(st.scoped[1].percent, 50, "input untouched")
+		assert_nil(normalize.expire(nil, 1))
+	end)
+end)
+
+describe("model (robustness)", function()
+	it("shows 0 % for windows whose reset has passed", function()
+		local path = "spec/tmp/expiring.json"
+		write_cache(path, '{"ts":1758560000,"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1758560100},'
+			.. '"seven_day":{"used_percentage":70,"resets_at":1758900000}}}')
+		local deps = setup({ cache_path = path, sources = { "statusline" }, stale_after = 100000 })
+		assert_eq(model.state.five_hour.percent, 40)
+		local shown = model.state.five_hour
+		deps.t = 1758560101
+		deps.timers[2]:fire() -- redraw
+		assert_eq(model.state.five_hour.percent, 0)
+		assert_true(model.state.five_hour.assumed)
+		assert_nil(model.state.five_hour.resets_at)
+		assert_eq(model.state.seven_day.percent, 70)
+		assert_eq(shown.percent, 40, "the primed window itself is not mutated")
+		deps.timers[1]:fire() -- finalize
+		assert_eq(model.state.source, "statusline")
+		assert_eq(model.state.five_hour.percent, 0)
+		-- already expired while priming
+		model.stop()
+		local d2 = H.deps(1758560200)
+		model.setup(config.resolve({ cache_path = path, sources = { "statusline" }, jitter = 0, history = false,
+			sessions = false, credentials_path = "spec/fixtures/nope.json" }), d2)
+		assert_eq(model.state.five_hour.percent, 0)
+	end)
+
+	it("keeps no per-model limits from before a weekly reset", function()
+		local path = "spec/tmp/after_reset.json"
+		local deps = setup({ fresh_cache_max_age = 120, cache_path = path })
+		os.remove(path)
+		deps.t = WEEK_RESET - 60
+		deps.timers[1]:fire()
+		H.respond(deps, API_BODY, 200)
+		assert_eq(#model.state.scoped, 2)
+		-- the cache after the reset carries no weekly window yet
+		deps.t = WEEK_RESET + 30
+		write_cache(path, '{"ts":' .. deps.t .. ',"rate_limits":{"five_hour":{"used_percentage":1,"resets_at":'
+			.. (deps.t + 3600) .. "}}}")
+		deps.timers[1]:fire()
+		assert_eq(#deps.spawned, 1)
+		assert_eq(model.state.source, "statusline")
+		assert_true(model.state.seven_day.assumed)
+		assert_eq(#model.state.scoped, 0)
+		assert_nil(model.state.breakdown)
+		assert_nil(model.state.spend)
+		-- a weekly window without resets_at after the API reset passed
+		write_cache(path, '{"ts":' .. deps.t .. ',"rate_limits":{"five_hour":{"used_percentage":1},'
+			.. '"seven_day":{"used_percentage":2}}}')
+		model.cache_changed()
+		assert_eq(model.state.source, "statusline")
+		assert_eq(model.state.seven_day.percent, 2)
+		assert_eq(#model.state.scoped, 0)
+	end)
+
+	it("does not copy per-model limits whose own reset has passed", function()
+		local path = "spec/tmp/scoped_reset.json"
+		local body = API_BODY:gsub("2026%-09%-23T15:00:00%.261865", "2026-09-22T15:00:00", 1)
+		local deps = setup({ fresh_cache_max_age = 120, cache_path = path })
+		os.remove(path)
+		deps.t = WEEK_RESET - 86400 - 60
+		deps.timers[1]:fire()
+		H.respond(deps, body, 200)
+		assert_eq(#model.state.scoped, 2)
+		deps.t = WEEK_RESET - 86400 + 30
+		write_cache(path, '{"ts":' .. deps.t .. ',"rate_limits":{"five_hour":{"used_percentage":1},'
+			.. '"seven_day":{"used_percentage":2,"resets_at":' .. WEEK_RESET .. "}}}")
+		deps.timers[1]:fire()
+		assert_eq(model.state.source, "statusline")
+		assert_eq(#model.state.scoped, 1)
+		assert_eq(model.state.scoped[1].name, "claude-opus-5")
+	end)
+
+	it("marks fallback states and neither records them nor counts them as API answers", function()
+		local hist = "spec/tmp/fallback_history.csv"
+		local path = "spec/tmp/fallback_cache.json"
+		os.remove(hist)
+		os.remove(path)
+		local deps = setup({ history = true, history_path = hist, cache_path = path, fresh_cache_max_age = 120,
+			sources = { "api", "statusline" } })
+		deps.timers[1]:fire()
+		H.respond(deps, API_BODY, 200)
+		assert_nil(model.state.fallback)
+		assert_eq(#model.samples(), 4)
+		local t0 = deps.t
+		deps.t = t0 + 800
+		deps.timers[1]:fire()
+		H.respond(deps, "", 503)
+		assert_true(model.state.fallback)
+		assert_eq(model.state.source, "api")
+		assert_eq(model.state.seven_day.percent, 67)
+		assert_eq(#model.samples(), 4, "fallback not recorded")
+		-- the API answer is 1000 s old: a fresh cache must not replace the API call
+		deps.t = t0 + 1000
+		write_cache(path, '{"ts":' .. deps.t .. ',"rate_limits":{"five_hour":{"used_percentage":1},'
+			.. '"seven_day":{"used_percentage":2}}}')
+		deps.timers[1]:fire()
+		assert_eq(#deps.spawned, 3)
+		os.remove(hist)
+	end)
+
+	it("floors a fractional jitter and survives errors in the fetch path", function()
+		local deps, opts = setup()
+		opts.jitter = 7.5
+		deps.timers[1]:fire()
+		H.respond(deps, API_BODY, 200)
+		assert_eq(model.state.source, "api")
+		local d = deps.timers[1].timeout
+		assert_true(d >= 293 and d <= 307, "delay " .. tostring(d))
+		assert_true(deps.timers[1].started)
+		-- an error inside the fetch path must not stop polling
+		opts.jitter = 0
+		local cache = require("source.statusline_cache")
+		local read = cache.read
+		cache.read = function()
+			error("boom")
+		end
+		local ok = pcall(function()
+			model.refresh()
+		end)
+		H.respond(deps, "", 401) -- falls through to the statusline source, which throws
+		cache.read = read
+		assert_true(ok)
+		assert_true(deps.timers[1].started, "timer re-armed")
+		assert_eq(deps.timers[1].timeout, opts.interval)
+		assert_true(deps.warnings[#deps.warnings]:find("boom", 1, true) ~= nil)
+		assert_eq(model.refresh(), true, "no longer in flight")
+	end)
+
+	it("treats a curl that cannot be started as a failed fetch", function()
+		local deps = setup()
+		deps.spawn_result = "execvp: no such file"
+		deps.timers[1]:fire()
+		assert_eq(#deps.spawned, 1)
+		assert_eq(model.state.error.code, "network")
+		assert_true(deps.timers[1].started)
+		deps.spawn_result = nil
+		deps.t = deps.t + 101 -- past the network backoff
+		assert_eq(model.refresh(), true)
+		assert_eq(#deps.spawned, 2)
+	end)
+
+	it("gives up on a fetch whose callback never comes", function()
+		local deps, opts = setup()
+		deps.timers[1]:fire()
+		assert_eq(model.refresh(), false)
+		deps.t = deps.t + opts.timeout + 31
+		deps.timers[2]:fire() -- redraw notices it and re-arms the fetch timer
+		assert_true(deps.timers[1].started)
+		assert_eq(model.refresh(), true)
+		assert_eq(#deps.spawned, 2)
+		-- the late answer of the abandoned fetch is ignored
+		deps.spawned[1].cb(API_BODY .. "\n200", "", "exit", 0)
+		assert_eq(model.state.source, "statusline")
+		assert_eq(model.refresh(), false, "second fetch still in flight")
+		H.respond(deps, API_BODY, 200)
+		assert_eq(model.state.source, "api")
+		-- tick() and refresh() run the watchdog as well
+		deps.timers[1]:fire()
+		deps.t = deps.t + opts.timeout + 31
+		deps.timers[1]:start()
+		deps.timers[1]:fire()
+		assert_eq(#deps.spawned, 4)
+	end)
+
+	it("ignores callbacks of fetches started before stop() or setup()", function()
+		local deps = setup()
+		deps.timers[1]:fire()
+		local late = deps.spawned[1].cb
+		model.stop()
+		late(API_BODY .. "\n200", "", "exit", 0)
+		assert_nil(model.state)
+		local deps2 = setup()
+		deps2.timers[1]:fire()
+		late(API_BODY .. "\n200", "", "exit", 0)
+		assert_eq(model.state.source, "statusline")
+		assert_eq(model.refresh(), false, "the new fetch is still in flight")
+		H.respond(deps2, API_BODY, 200)
+		assert_eq(model.state.source, "api")
 	end)
 end)
