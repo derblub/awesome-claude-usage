@@ -70,16 +70,40 @@ function M.interpret(stdout, stderr, reason, code, now)
 	return false, { code = "parse", message = "HTTP " .. http, http = http, at = now }
 end
 
---- Directory for the short-lived header file: $XDG_RUNTIME_DIR/claude-usage, else the cache dir.
+--- Candidate directories for the short-lived header file, best first: $XDG_RUNTIME_DIR/claude-usage,
+--- then an "auth" directory next to the cache file. Both belong to this widget alone, so making
+--- them mode 700 never touches a directory the user owns for something else (e.g. $HOME).
 ---@param opts table
 ---@param getenv function|nil defaults to os.getenv (injectable for tests)
----@return string
-function M.header_dir(opts, getenv)
+---@return string[]
+function M.header_dirs(opts, getenv)
+	local dirs = {}
 	local runtime = (getenv or os.getenv)("XDG_RUNTIME_DIR")
 	if runtime and runtime ~= "" then
-		return runtime .. "/claude-usage"
+		dirs[#dirs + 1] = runtime .. "/claude-usage"
 	end
-	return (opts.cache_path or ""):match("^(.*)/[^/]+$") or "."
+	dirs[#dirs + 1] = ((opts.cache_path or ""):match("^(.*)/[^/]+$") or ".") .. "/auth"
+	return dirs
+end
+
+--- The preferred header directory (see header_dirs).
+function M.header_dir(opts, getenv)
+	return M.header_dirs(opts, getenv)[1]
+end
+
+--- Write the header file into the first usable directory of header_dirs.
+---@return string|nil path
+---@return string|nil err
+function M.write_header_any(opts, token, write)
+	local err
+	for _, dir in ipairs(M.header_dirs(opts)) do
+		local ok, path, werr = pcall(write or M.write_header, dir, token)
+		if ok and type(path) == "string" then
+			return path
+		end
+		err = ok and werr or path
+	end
+	return nil, err
 end
 
 local counter = 0
@@ -92,7 +116,16 @@ local counter = 0
 ---@return string|nil err
 function M.write_header(dir, token)
 	local qdir = shell_quote(dir)
-	os.execute("umask 077; mkdir -p -m 700 " .. qdir .. " 2>/dev/null; chmod 700 " .. qdir .. " 2>/dev/null")
+	-- Also drop header files a previous run could not remove (awesome restarted mid-request).
+	os.execute(
+		"umask 077; mkdir -p -m 700 "
+			.. qdir
+			.. " 2>/dev/null; chmod 700 "
+			.. qdir
+			.. " 2>/dev/null; find "
+			.. qdir
+			.. " -maxdepth 1 -name 'auth-*.hdr' -mmin +10 -exec rm -f {} + 2>/dev/null"
+	)
 	counter = counter + 1
 	local id = tostring({}):match("0x(%x+)") or tostring({}):match("(%x+)$") or ""
 	local path = string.format("%s/auth-%d-%d-%s.hdr", dir, os.time(), counter, id)
@@ -120,10 +153,8 @@ end
 ---@param cb fun(ok: boolean, result: table)
 function M.fetch(opts, deps, token, cb)
 	local remove = deps.remove or os.remove
-	local okw, header_file = pcall(deps.write_header or M.write_header, M.header_dir(opts), token)
-	if not okw or type(header_file) ~= "string" then
-		header_file = nil -- fall back to the token on argv rather than not fetching at all
-	end
+	-- Without a usable header file, fall back to the token on argv rather than not fetching at all.
+	local header_file = M.write_header_any(opts, token, deps.write_header)
 	local function cleanup()
 		if header_file then
 			pcall(remove, header_file)

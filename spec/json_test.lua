@@ -70,6 +70,14 @@ describe("source.claude_json", function()
 		assert_eq(cu.fetchedAtMs, 5)
 		assert_eq(cu.utilization.five_hour.utilization, 3)
 	end)
+	it("prefers the top-level key over a nested one", function()
+		local path = write(
+			"spec/tmp/claude_nested.json",
+			'{"projects":{"p":{"cachedUsageUtilization":{"fetchedAtMs":1,"utilization":{"n":1}}}},'
+				.. '"cachedUsageUtilization":{"fetchedAtMs":2,"utilization":{"five_hour":5}}}'
+		)
+		assert_eq(claude_json.read(path).fetchedAtMs, 2)
+	end)
 	it("reads the fixture", function()
 		local cu = claude_json.read("spec/fixtures/claude_json.json")
 		assert_true(type(cu.utilization) == "table")

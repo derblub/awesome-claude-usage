@@ -279,6 +279,28 @@ describe("model (cache preference, sessions, history)", function()
 		assert_true(model.state.pace.seven_day == nil or model.state.pace.seven_day >= 0)
 		os.remove(path)
 	end)
+
+	it("gives no forecast for a window whose reset passed without new data", function()
+		local path = "spec/tmp/model_history_reset.csv"
+		os.remove(path)
+		local reset = 1790023800 -- five_hour.resets_at of the API fixture
+		local deps = setup({ history = true, history_path = path, cache_path = "spec/fixtures/nope.json" })
+		deps.t = reset - 1800
+		deps.timers[1]:fire()
+		H.respond(deps, API_BODY, 200)
+		deps.t = reset - 900
+		deps.timers[1]:fire()
+		H.respond(deps, (API_BODY:gsub('"percent": 3,', '"percent": 40,', 1)), 200)
+		assert_true(model.state.forecast.five_hour ~= nil, "a forecast before the reset")
+		-- Past the reset with the API down: the window shows 0% (assumed), and the old cycle's
+		-- samples must not give it a forecast.
+		deps.t = reset + 60
+		deps.timers[1]:fire()
+		H.respond(deps, "oops", 500)
+		assert_true(model.state.five_hour.assumed)
+		assert_nil(model.state.forecast.five_hour)
+		os.remove(path)
+	end)
 end)
 
 describe("model (hook, cache watch)", function()

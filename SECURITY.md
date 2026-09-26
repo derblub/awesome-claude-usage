@@ -7,9 +7,10 @@
 - **Sends** that token as a `Bearer` header to `https://api.anthropic.com/api/oauth/usage`
   through a local `curl` process. The token is not put on curl's command line (which
   any local user can read through `/proc/<pid>/cmdline`): it is written to a mode 600
-  header file in a mode 700 directory (`$XDG_RUNTIME_DIR/claude-usage/`, or the cache
-  directory when `XDG_RUNTIME_DIR` is unset), passed as `curl -H @file`, and removed
-  after each request. Only if that file cannot be written does the widget fall back to
+  header file in a mode 700 directory (`$XDG_RUNTIME_DIR/claude-usage/`, or `auth/`
+  inside the cache directory when that is unavailable), passed as `curl -H @file`, and
+  removed after each request; files left behind by an interrupted request are deleted
+  after ten minutes. Only if no such file can be written does the widget fall back to
   passing the header as an argument; the CLI then reports an error instead.
 - **Reads** `~/.claude.json` (only the `cachedUsageUtilization` key), the cache
   file written by `contrib/statusline-cache.sh`, and `~/.claude/sessions/*.json`

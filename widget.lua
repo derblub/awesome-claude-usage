@@ -143,7 +143,8 @@ function M.new(model, opts)
 	local text_opts = setmetatable({ show_glyph = opts.icon == "glyph" and opts.show_glyph }, { __index = opts })
 
 	local function render(state)
-		local text = gears.string.xml_escape(format.bar_text(state, text_opts))
+		local plain = format.bar_text(state, text_opts)
+		local text = gears.string.xml_escape(plain)
 		if chip and opts.compact then
 			fill_percent = format.max_percent(state, opts) or 0
 			container._fill_color = format.chip_color(state, opts)
@@ -159,7 +160,7 @@ function M.new(model, opts)
 		if opts.compact then
 			-- In compact mode bar_text holds only the flags (spend amount, attention); keep them
 			-- visible. Loading and error texts stay hidden, the chip colour shows those.
-			if not format.has_data(state) then
+			if plain == "" or not format.has_data(state) then
 				text = ""
 			end
 			textbox.visible = text ~= ""

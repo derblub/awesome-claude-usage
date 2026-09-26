@@ -18,6 +18,10 @@ local function decode_key(content)
 	if not s or (s > 1 and content:sub(s - 1, s - 1) == "\\") then
 		return nil
 	end
+	-- A second occurrence may be the nested one; only a full decode knows which is top level.
+	if content:find('"cachedUsageUtilization"', e + 1, true) then
+		return nil
+	end
 	local ok, cu = pcall(json.decode_at, content, e + 1)
 	if ok and valid(cu) then
 		return cu

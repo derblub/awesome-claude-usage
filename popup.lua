@@ -277,7 +277,14 @@ function M.attach(widget, model, opts)
 					end
 					passing = true
 					self:stop()
-					gears.timer.delayed_call(awful.key.execute, mods, key)
+					-- Lock/Mod2 (Caps/Num Lock) would be fake-pressed, i.e. toggled, by execute.
+					local replay = {}
+					for _, m in ipairs(mods) do
+						if not gears.table.hasitem(awful.key.ignore_modifiers, m) then
+							replay[#replay + 1] = m
+						end
+					end
+					gears.timer.delayed_call(awful.key.execute, replay, key)
 				end,
 				stop_callback = function()
 					keygrabber = nil

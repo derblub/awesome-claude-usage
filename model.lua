@@ -127,7 +127,9 @@ local function attach_analysis(st, t)
 	st.forecast = { scoped = {} }
 	st.pace = {}
 	local function analyse(key, w, lookback)
-		if not w then
+		-- An assumed window (reset passed, no new data yet) has no cycle to forecast; the old
+		-- cycle's samples would otherwise give a rate for a window that shows 0%.
+		if not w or w.assumed then
 			return nil
 		end
 		local rate = history.rate(_samples, key, t, lookback, w.resets_at)

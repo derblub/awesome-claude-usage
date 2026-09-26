@@ -28,7 +28,23 @@ describe("source.api header file", function()
 		end), "/run/user/1/claude-usage")
 		assert_eq(api.header_dir(opts, function()
 			return nil
-		end), "/c/claude-usage")
+		end), "/c/claude-usage/auth")
+	end)
+	it("tries the next directory when the first cannot be written", function()
+		local opts = { cache_path = "/c/claude-usage/rate_limits.json" }
+		local tried = {}
+		local path = api.write_header_any(opts, "TOK", function(dir)
+			tried[#tried + 1] = dir
+			if #tried == 1 and dir:find("/run/", 1, true) then
+				return nil, "read-only"
+			end
+			return dir .. "/auth-1.hdr"
+		end)
+		assert_eq(path, tried[#tried] .. "/auth-1.hdr")
+		assert_eq(tried[#tried], "/c/claude-usage/auth")
+		assert_nil(api.write_header_any(opts, "TOK", function()
+			error("boom")
+		end))
 	end)
 	it("writes a private header file", function()
 		local dir = "spec/tmp/hdr dir'x"

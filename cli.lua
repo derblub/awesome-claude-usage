@@ -88,9 +88,9 @@ end
 
 local function run_curl(token)
 	-- The token goes through a mode 600 header file, never through argv or the shell string.
-	local header_file, herr = api.write_header(api.header_dir(opts), token)
+	local header_file = api.write_header_any(opts, token)
 	if not header_file then
-		return false, { code = "network", message = "cannot write header file: " .. tostring(herr), at = now }
+		return false, { code = "network", message = "cannot write the auth header file", at = now }
 	end
 	local err_file = header_file .. ".err"
 	local parts = {}
@@ -202,7 +202,7 @@ end
 if not state and last.state then
 	state = last.state
 end
-state = state or { scoped = {} }
+state = normalize.expire(state or { scoped = {} }, now)
 state.error = err
 state.stale = state.fetched_at ~= nil and (now - state.fetched_at) > opts.stale_after
 
