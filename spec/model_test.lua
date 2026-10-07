@@ -53,6 +53,23 @@ describe("model", function()
 		assert_eq(model.state.next_fetch_at, deps.t + opts.interval)
 	end)
 
+	it("keeps polling when a tick finishes synchronously (still in backoff)", function()
+		local deps, opts = setup()
+		deps.timers[1]:fire()
+		H.respond(deps, "", 429)
+		-- The timer fires before the backoff is over (jitter): no request, the fallback answers at once.
+		deps.t = deps.t + 70
+		deps.timers[1]:fire()
+		assert_eq(#deps.spawned, 1, "no new request while blocked")
+		assert_eq(model.state.error.code, "rate_limited")
+		assert_true(deps.timers[1].started, "the next fetch is still scheduled")
+		deps.t = deps.t + 100
+		deps.timers[1]:fire()
+		H.respond(deps, API_BODY, 200)
+		assert_eq(model.state.source, "api")
+		assert_eq(deps.timers[1].timeout, opts.interval)
+	end)
+
 	it("falls back to the statusline cache on 429 and backs off", function()
 		local deps = setup()
 		deps.timers[1]:fire()

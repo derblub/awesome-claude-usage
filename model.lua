@@ -3,7 +3,7 @@
 -- Dependencies are injected through `deps` so the module runs without awesome in tests:
 --   deps.now()               -> epoch seconds
 --   deps.spawn(argv, cb)     -> like awful.spawn.easy_async
---   deps.timer(args)         -> like gears.timer (fields timeout/single_shot/autostart/callback, :start/:stop/:again)
+--   deps.timer(args)         -> like gears.timer (fields timeout/autostart/callback, :start/:stop/:again)
 --   deps.notify(args)        -> like naughty.notification
 --   deps.warn(msg)           -> log a warning
 
@@ -356,6 +356,11 @@ try_source = function(i, err, delay)
 end
 
 local function tick()
+	-- Not a single_shot timer: gears.timer stops those after the callback, which would also kill
+	-- the re-arm a synchronous finalize() does (backoff, fresh cache, no credentials).
+	if _timer then
+		_timer:stop()
+	end
 	check_watchdog()
 	if _inflight then
 		return
@@ -487,7 +492,6 @@ function M.setup(opts, deps)
 
 	_timer = deps.timer({
 		timeout = opts.initial_delay or 5,
-		single_shot = true,
 		autostart = true,
 		callback = tick,
 	})
