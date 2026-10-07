@@ -50,10 +50,12 @@ function H.deps(t0)
 		end
 		function tm:fire()
 			assert(self.started, "firing a stopped timer")
+			self.callback()
+			-- gears.timer connects its single_shot stop handler after the callback, so it
+			-- also stops a timer the callback has just re-armed with :again().
 			if self.single_shot then
 				self.started = false
 			end
-			self.callback()
 		end
 		d.timers[#d.timers + 1] = tm
 		return tm

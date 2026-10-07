@@ -17,6 +17,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The README lists every option with its default and explains `!parse`.
 
 ### Fixed
+- Polling could stop for good: when a fetch finished synchronously (still in the 429 backoff, fresh
+  statusLine cache, no credentials), `gears.timer`'s `single_shot` stop ran after the callback and killed
+  the freshly re-armed timer. The fetch timer is no longer `single_shot`, and the test timer now stops
+  after the callback like the real one.
 - A used-up window showed "at this pace empty in expired" in the popup; it now says "limit reached".
 - Reset times were off by an hour near daylight saving time transitions.
 - Reading a large `~/.claude.json` is much faster, and escaped surrogate pairs decode correctly.
