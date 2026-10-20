@@ -216,10 +216,17 @@ function M.shows_cost(st, opts)
 	return mode == true
 end
 
---- Append the session cost (" $1.23", no "+": that marks extra usage) and the attention flag.
+--- Append the session cost and the attention flag. The cost sits behind a separator (" │ $1.23"),
+--- so it reads neither as extra usage ("+$3.53") nor as part of the usage numbers; with nothing in
+--- front of it (compact mode) it stands alone.
 local function flags(text, st, opts)
 	if M.shows_cost(st, opts) then
-		text = text .. " " .. M.money(st.session_cost.usd, "USD")
+		local amount = M.money(st.session_cost.usd, "USD")
+		if text:match("%S") then
+			text = text .. (opts.cost_separator or " \226\148\130 ") .. amount
+		else
+			text = amount
+		end
 	end
 	if opts.sessions_in_bar and st.sessions and (st.sessions.attention or 0) > 0 then
 		text = text .. (opts.attention_flag or " !")
@@ -297,7 +304,25 @@ function M.bar_text(st, opts)
 	return flags(text, st, opts)
 end
 
---- One line for the active session's context window, nil when unknown.
+--- Model name for display, without a trailing context hint the context line already gives
+--- ("Opus 5.5 (1M context)" -> "Opus 5.5"). nil for a missing or empty name.
+---@param name any
+---@return string|nil
+function M.model_name(name)
+	if name == nil then
+		return nil
+	end
+	local s = tostring(name)
+	local inner = s:match("%((.-)%)%s*$")
+	if inner and inner:lower():find("context", 1, true) then
+		s = s:gsub("%s*%b()%s*$", "")
+	end
+	s = s:gsub("^%s+", ""):gsub("%s+$", "")
+	return s ~= "" and s or nil
+end
+
+--- One line for the active session's context window, nil when unknown:
+--- "Context 9% of 1M · Opus 5.5".
 ---@param ctx table|nil
 ---@return string|nil
 function M.context_text(ctx)
@@ -309,8 +334,8 @@ function M.context_text(ctx)
 		size = ctx.size >= 1000000 and string.format(" of %.0fM", ctx.size / 1000000)
 			or string.format(" of %dk", math.floor(ctx.size / 1000))
 	end
-	local model = ctx.model and (" (" .. tostring(ctx.model) .. ")") or ""
-	return string.format("Active session: %d%%%s context%s", M.round(ctx.percent), size, model)
+	local model = M.model_name(ctx.model)
+	return string.format("Context %d%%%s", M.round(ctx.percent), size) .. (model and (" · " .. model) or "")
 end
 
 --- Text and level for a forecast (see history.forecast).
@@ -342,7 +367,7 @@ function M.forecast_text(fc, now)
 	return nil, "normal"
 end
 
---- One line describing the running Claude Code sessions.
+--- One line describing the running Claude Code sessions: "2 sessions · 1 working · 1 idle".
 ---@param sessions table|nil summary from sessions.read
 ---@return string|nil
 function M.sessions_text(sessions)
@@ -362,7 +387,8 @@ function M.sessions_text(sessions)
 	if sessions.idle > 0 then
 		parts[#parts + 1] = sessions.idle .. " idle"
 	end
-	return string.format("%d session%s: %s", sessions.total, sessions.total == 1 and "" or "s", table.concat(parts, ", "))
+	local count = string.format("%d session%s", sessions.total, sessions.total == 1 and "" or "s")
+	return count .. " · " .. table.concat(parts, " · ")
 end
 
 --- Human readable money amount.
@@ -391,47 +417,61 @@ function M.source_name(source)
 	return SOURCE_NAME[source] or tostring(source or "unknown")
 end
 
---- "Session cost $1.23" (with " (API key)" in API-key mode), nil without a cost.
+--- "Session cost $1.23", nil without a cost. Used outside API-key mode (cost_in_bar = true), where
+--- the amount is what the session would cost on the API, not money spent.
 ---@param cost table|nil { usd }
----@param api_key_mode boolean|nil
 ---@return string|nil
-function M.session_cost_text(cost, api_key_mode)
+function M.session_cost_text(cost)
 	if type(cost) ~= "table" or type(cost.usd) ~= "number" then
 		return nil
 	end
-	return "Session cost " .. M.money(cost.usd, "USD") .. (api_key_mode and " (API key)" or "")
+	return "Session cost " .. M.money(cost.usd, "USD")
 end
 
---- Credential errors are expected without a Claude Code login (API key, Claude Desktop only);
---- returns a calm note for those, nil for every other case.
+--- The API-key section of the popup: the active session's cost, nil outside API-key mode or
+--- without a cost. The model is left to the context line.
+---@param st table
+---@return table|nil { label, value, text }
+function M.api_key_row(st)
+	local cost = st.session_cost
+	if not st.api_key_mode or type(cost) ~= "table" or type(cost.usd) ~= "number" then
+		return nil
+	end
+	return { label = "API key", value = M.money(cost.usd, "USD"), text = "spent in this session" }
+end
+
+--- Credential errors are expected without a Claude Code login (API key, Claude Desktop only).
+--- Returns whether the error is such a case, and a calm note where it adds information (the
+--- API-key section already says why there is no login).
+---@return boolean expected
+---@return string|nil note
 local function credential_note(st)
 	local code = type(st.error) == "table" and st.error.code or nil
 	if code ~= "no_credentials" and code ~= "unauthorized" then
-		return nil
+		return false, nil
 	end
 	if st.api_key_mode then
-		return "Claude Code uses an API key (no subscription login)"
+		return true, nil
 	elseif st.source == "desktop" then
-		return (code == "unauthorized" and "Claude Code login expired" or "No Claude Code login")
+		return true, (code == "unauthorized" and "Claude Code login expired" or "No Claude Code login")
 			.. " – using Claude Desktop's data"
 	end
-	return nil
+	return false, nil
 end
 
---- Muted info lines for the popup: where subscription data comes from in API-key mode, the
---- session cost, and a credentials note. The second value is the error text still to show.
+--- Muted info lines for the popup: the session cost outside API-key mode (in API-key mode the
+--- API-key section shows it) and a credentials note. The second value is the error text still
+--- to show.
 ---@return string[] notes
 ---@return string|nil error
 local function notes_and_error(st, now)
 	local notes = {}
-	if st.api_key_mode and M.has_data(st) and st.fetched_at then
-		notes[#notes + 1] = "subscription data from " .. M.source_name(st.source) .. ", "
-			.. timeparse.age(st.fetched_at, now) .. (st.stale and " (stale)" or "")
+	if not st.api_key_mode then
+		notes[#notes + 1] = M.session_cost_text(st.session_cost)
 	end
-	notes[#notes + 1] = M.session_cost_text(st.session_cost, st.api_key_mode)
-	local note = credential_note(st)
-	if note then
-		notes[#notes + 1] = note
+	local expected, note = credential_note(st)
+	notes[#notes + 1] = note
+	if expected then
 		return notes, nil
 	end
 	return notes, st.error and M.error_text(st.error, now) or nil
@@ -555,7 +595,11 @@ function M.popup_lines(st, now, opts)
 			lines[#lines + 1] = text
 		end
 	else
-		lines[#lines + 1] = st.api_key_mode and "No subscription data (API key)" or "No usage data"
+		lines[#lines + 1] = st.api_key_mode and "No subscription data" or "No usage data"
+	end
+	local key_row = M.api_key_row(st)
+	if key_row then
+		lines[#lines + 1] = key_row.label .. ": " .. key_row.value .. " " .. key_row.text
 	end
 
 	local context_line = M.context_text(st.context)
@@ -571,8 +615,7 @@ function M.popup_lines(st, now, opts)
 		lines[#lines + 1] = note
 	end
 	lines[#lines + 1] = ""
-	-- in API-key mode the notes already name the source and the age
-	if st.fetched_at and not (st.api_key_mode and M.has_data(st)) then
+	if st.fetched_at then
 		local line = "via " .. M.source_name(st.source) .. ", " .. timeparse.age(st.fetched_at, now)
 		if st.stale then
 			line = line .. " (stale)"
@@ -619,7 +662,8 @@ end
 ---@param st table|nil
 ---@param now integer
 ---@param opts table resolved options
----@return table rows  { title, subtitle, windows = { {label, sub, percent, level, reset, active} }, spend, breakdown, footer, error, stale }
+---@return table rows  { title, subtitle, windows = { {label, sub, percent, level, reset, active} }, spend, breakdown,
+---  api_key = { label, value, text }, context, notes, sessions, footer, error, stale }
 function M.popup_rows(st, now, opts)
 	opts = opts or {}
 	local thresholds = opts.thresholds or {}
@@ -636,7 +680,8 @@ function M.popup_rows(st, now, opts)
 		sub[#sub + 1] = plan
 	end
 	if st.fetched_at then
-		sub[#sub + 1] = "via " .. M.source_name(st.source) .. " " .. timeparse.age(st.fetched_at, now)
+		sub[#sub + 1] = "via " .. M.source_name(st.source)
+		sub[#sub + 1] = timeparse.age(st.fetched_at, now)
 	end
 	if st.stale then
 		sub[#sub + 1] = "stale"
@@ -692,8 +737,10 @@ function M.popup_rows(st, now, opts)
 			end
 		end
 	else
-		rows.empty = st.api_key_mode and "No subscription data (Claude Code uses an API key)" or "No usage data"
+		rows.empty = st.api_key_mode and "No subscription data" or "No usage data"
 	end
+
+	rows.api_key = M.api_key_row(st)
 
 	rows.context = M.context_text(st.context)
 	local notes, err_text = notes_and_error(st, now)

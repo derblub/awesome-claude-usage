@@ -101,20 +101,21 @@ function M.build(rows, opts, samples)
 			textbox(right_text or pct_markup, f_pct, "right"),
 			layout = wibox.layout.align.horizontal,
 		})
-		local progress = bar.bar({
-			value = percent or 0,
-			color = color,
-			track = c.track,
-			marker = extra.pace,
-			marker_color = c.muted,
-			height = dpi(6),
-		})
 		local row = wibox.widget({
 			head,
-			progress,
 			layout = wibox.layout.fixed.vertical,
 			spacing = dpi(4),
 		})
+		if not extra.no_bar then
+			row:add(bar.bar({
+				value = percent or 0,
+				color = color,
+				track = c.track,
+				marker = extra.pace,
+				marker_color = c.muted,
+				height = dpi(6),
+			}))
+		end
 		if note then
 			row:add(textbox(span(note, c.muted), f_small))
 		end
@@ -163,12 +164,18 @@ function M.build(rows, opts, samples)
 		body:add(textbox(span("This week: " .. rows.breakdown, c.muted), f_small))
 	end
 
+	-- API key: what the active session has cost so far (no limit, so no bar)
+	if rows.api_key then
+		local value = span(rows.api_key.value, c.fg, ' font_weight="bold"')
+		body:add(bar_row(rows.api_key.label, nil, nil, "normal", value, rows.api_key.text, { no_bar = true }))
+	end
+
 	-- Active session context window
 	if rows.context then
 		body:add(textbox(span(rows.context, c.muted), f_small))
 	end
 
-	-- Data source in API-key mode, session cost, credentials note
+	-- Session cost outside API-key mode, credentials note
 	for _, note in ipairs(rows.notes or {}) do
 		body:add(textbox(span(note, c.muted), f_small))
 	end

@@ -70,7 +70,7 @@ click opens Claude Code.
      for people who use the Desktop app or run Claude Code with an API key
   4. `~/.claude.json`, Claude Code's own cached copy of the last `/usage` result
 - API-key mode: with Claude Code on `ANTHROPIC_API_KEY` the bar shows the subscription values
-  that are still available (with their age) plus the session cost (`$1.23`), or `API $1.23`
+  that are still available (with their age) plus the session cost (`│ $1.23`), or `API │ $1.23`
 - Exponential backoff on HTTP 429 and network errors; the bar never hammers the endpoint
 - Reads the OAuth token only. It never refreshes or writes it, so it cannot log you out.
 - Pure Lua (5.1 to 5.4 and LuaJIT), no LuaRocks dependencies; `curl` is the only external tool (`jq` for the optional
@@ -154,7 +154,8 @@ claude_usage.new({
     attention_flag = " \226\154\145", -- U+2691 black flag
     spend_in_bar  = true,     -- append the extra usage spent (" +3.53€") while it is being consumed
     spend_flag    = nil,      -- a fixed marker instead of the amount, e.g. " $"
-    cost_in_bar   = "auto",   -- append the session cost (" $1.23"): "auto" = in API-key mode only, true, false
+    cost_in_bar   = "auto",   -- append the session cost (" │ $1.23"): "auto" = in API-key mode only, true, false
+    cost_separator = " \226\148\130 ", -- U+2502 between the usage and the cost; alone in compact mode
     watch_cache   = true,     -- read the statusLine cache the moment it changes (needs inotifywait)
     context_max_age = 900,    -- show the active session's context window and cost while the cache is this fresh
     notify_attention = true,  -- a session waits for a permission or an answer
@@ -333,8 +334,8 @@ To rely on the cache alone (no network at all): `sources = { "statusline" }`.
 
 The helper also stores the active session's context window (`used_percentage`, size,
 input tokens), the session cost (`cost.total_cost_usd`), the model name and the session id. The popup shows them as
-"Active session: 41% of 1M context (Fable)" while the cache is younger than
-`context_max_age`, and "Session cost $1.23". With `inotify-tools` installed the widget picks up every rewrite
+"Context 41% of 1M · Fable" while the cache is younger than
+`context_max_age`, and the session cost (see API-key mode). With `inotify-tools` installed the widget picks up every rewrite
 of the cache instantly (`watch_cache`); otherwise it reads it on the next fetch.
 
 ## The hook (instant "needs your attention")
@@ -448,13 +449,18 @@ Claude Code with `ANTHROPIC_API_KEY` has no subscription login: no OAuth token, 
 JSON has no `rate_limits`. The widget recognises this (a fresh statusLine cache without rate limits
 and no usable token) and then
 
-- shows the subscription values that are still available (Claude Desktop, the last good data)
-  with their age: "subscription data from Claude Desktop, 12 min ago",
-- shows the session cost from the statusLine helper: "Session cost $1.23 (API key)", and in the
-  bar `$1.23` (`cost_in_bar`; `"auto"` shows it in API-key mode only, `true` always),
-- shows `API $1.23` instead of `!cred` when no subscription data exists at all.
+- shows the subscription values that are still available (Claude Desktop, the last good data);
+  the popup header names their source and age ("via Claude Desktop · 12 min ago"),
+- shows an "API key" section in the popup with the active session's cost from the statusLine
+  helper ("$1.23", "spent in this session"), and in the bar `5h 1% · 7d 99% │ $1.23`
+  (`cost_in_bar`; `"auto"` shows it in API-key mode only, `true` always),
+- shows `API │ $1.23` instead of `!cred` when no subscription data exists at all.
 
-The cost has no `+`, so it cannot be mistaken for paid extra usage (`+$3.53`).
+The cost is what Claude Code reports for the current session (`cost.total_cost_usd`), not your
+credit balance; Anthropic has no API for the balance. The `│` separator keeps it apart from the
+usage numbers, and it has no `+`, so it cannot be mistaken for paid extra usage (`+$3.53`).
+Outside API-key mode (`cost_in_bar = true`) the popup shows it as a plain "Session cost $1.23"
+note: with a subscription it is what the session would have cost on the API.
 
 The access token comes from `~/.claude/.credentials.json`. Claude Code refreshes
 that token itself when you run it; this widget deliberately does **not**
@@ -487,8 +493,8 @@ any `claude` command and the next check succeeds.
 |---|---|---|
 | `!auth` | token expired or rejected (401/403) | run any `claude` command, wait for the next check or right-click |
 | `!cred` | `~/.claude/.credentials.json` missing or unreadable, and no other source has data | log in with `claude`; with an API key or Claude Desktop only, install the statusLine helper or use Desktop so the widget has data |
-| `API` / `API $1.23` | Claude Code runs with an API key and no subscription data exists; the amount is the session cost | nothing to do; Claude Desktop's data appears once its file exists |
-| `$1.23` after the numbers | session cost (API-key mode, or `cost_in_bar = true`) | `cost_in_bar = false` hides it |
+| `API` / `API │ $1.23` | Claude Code runs with an API key and no subscription data exists; the amount is the session cost | nothing to do; Claude Desktop's data appears once its file exists |
+| `│ $1.23` after the numbers | session cost (API-key mode, or `cost_in_bar = true`) | `cost_in_bar = false` hides it |
 | `!429` | rate limited and no cached data | wait; do not lower `interval` |
 | `!net` | curl failed or 5xx, no cached data | check connectivity; the widget retries with backoff |
 | `!parse` | the endpoint answered something unexpected (not JSON, no HTTP status, or an HTTP code other than 200/401/403/429/5xx), no cached data | check the popup for the HTTP code; if it persists the undocumented endpoint may have changed, open an issue with the `debug()` dump |

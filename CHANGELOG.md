@@ -15,10 +15,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `rate_limits`, no usable OAuth token) the popup names the source and age of the subscription
   values, and the bar shows `API` instead of `!cred` when there are none.
 - Session cost: the statusLine helper stores `cost.total_cost_usd`; the popup shows
-  "Session cost $1.23", the bar appends `$1.23` in API-key mode (`cost_in_bar`), and `cli.lua`
+  the cost, the bar appends `│ $1.23` in API-key mode (`cost_in_bar`), and `cli.lua`
   exposes `session_cost`, `api_key_mode` and the waybar class `api_key`.
+- Popup "API key" section in API-key mode: the session cost right-aligned, "spent in this
+  session" below, in the style of the usage rows (without a bar).
+- Option `cost_separator` (default `" │ "`) between the usage and the session cost in the bar.
 
 ### Changed
+- API-key mode presentation: the bar reads `5h 1% · 7d 99% │ $4.57` (`API │ $4.57` without
+  subscription data) so the session cost is not taken for a balance; the popup no longer repeats
+  the header's source and age as a "subscription data from …" note and drops the
+  "Claude Code uses an API key" note.
+- Popup header "via Claude Desktop · 14 min ago"; context line "Context 9% of 1M · Opus 5.5"
+  (a "(1M context)" suffix of the model name is dropped); sessions line
+  "2 sessions · 1 working · 1 idle".
 - Notifications fall back to `naughty.notify` on awesome 4.3 stable; the README now states that
   stable 4.3 is untested.
 - The bar text shows every per-model limit by default (`bar_windows` gains the entry `"scoped"`),

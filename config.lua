@@ -36,7 +36,8 @@ M.defaults = {
 	attention_flag = " \226\154\145", -- U+2691 black flag
 	spend_in_bar = true, -- append the extra usage spent (" +3.53€") while it is being consumed
 	spend_flag = nil, -- fixed marker instead of the amount, e.g. " $"
-	cost_in_bar = "auto", -- append the session cost (" $1.23"): "auto" = in API-key mode only, true, false
+	cost_in_bar = "auto", -- append the session cost (" │ $1.23"): "auto" = in API-key mode only, true, false
+	cost_separator = " \226\148\130 ", -- U+2502 box drawing bar between the usage and the session cost
 	watch_cache = true, -- react to the statusLine cache instantly via inotifywait (if installed)
 	context_max_age = 900, -- show the active session's context window and cost while the cache is this fresh
 	notify_attention = true, -- a session waits for a permission or an answer
