@@ -3,6 +3,8 @@ package.path = "./?.lua;./?/init.lua;" .. package.path
 
 local filter = arg and arg[1]
 os.execute("mkdir -p spec/tmp")
+-- Tests must never read the real Claude Desktop file of the machine they run on.
+require("config").defaults.desktop_path = "spec/fixtures/nope.json"
 local passed, failed = 0, 0
 local current = ""
 
@@ -78,6 +80,7 @@ local files = {
 	"spec/api_test.lua",
 	"spec/notify_test.lua",
 	"spec/model_test.lua",
+	"spec/desktop_test.lua",
 }
 for _, f in ipairs(files) do
 	local chunk, err = loadfile(f)

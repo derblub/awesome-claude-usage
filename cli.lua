@@ -4,6 +4,7 @@
 --   lua5.4 cli.lua              text:  "5h 16% · 7d 4%"
 --   lua5.4 cli.lua --json       the canonical state table as JSON
 --   lua5.4 cli.lua --waybar     {"text","tooltip","class","percentage"} for waybar's custom module
+--                               (class: normal, warn, crit, stale, error, or api_key without data)
 --   lua5.4 cli.lua --lines      the popup lines, one per row (tmux, notify-send, ...)
 --   options: --max-age N   reuse the last result if it is younger than N seconds (default 300,
 --                          at least 120 unless --no-network)
@@ -25,6 +26,7 @@ local credentials = require("source.credentials")
 local api = require("source.api")
 local statusline_cache = require("source.statusline_cache")
 local claude_json = require("source.claude_json")
+local desktop = require("source.desktop")
 
 local mode = "text"
 local max_age = 300
@@ -123,6 +125,7 @@ local function run_curl(token)
 end
 
 local last = read_json(last_path) or {}
+local samples = opts.history and history.load(opts.history_path) or nil
 local state, err
 local fresh = false -- true when this run obtained new data (not last.state again)
 
@@ -135,9 +138,13 @@ end
 if not state then
 	local raw = statusline_cache.read(opts.cache_path)
 	if raw and tonumber(raw.ts) and now - tonumber(raw.ts) <= opts.fresh_cache_max_age then
-		state = normalize.from_statusline(raw, now)
-		state.source = "statusline"
-		fresh = true
+		local st = normalize.from_statusline(raw, now)
+		-- API-key sessions write the cache without rate limits: nothing to show from it
+		if normalize.has_data(st) then
+			state = st
+			state.source = "statusline"
+			fresh = true
+		end
 	end
 end
 
@@ -183,12 +190,30 @@ if not state and network then
 	end
 end
 
--- 4) fallbacks
+-- 4) fallbacks: the file sources with usage windows (a fresher Desktop sample beats an old statusLine cache)
 if not state then
 	local raw = statusline_cache.read(opts.cache_path)
-	if raw then
-		state = normalize.from_statusline(raw, now)
+	local st = raw and normalize.from_statusline(raw, now)
+	if st and normalize.has_data(st) then
+		state = st
 		state.source = "statusline"
+		fresh = true
+	end
+end
+-- Also when the statusLine cache had data: a cache left over from the last Claude Code session
+-- must not hide a fresher Desktop sample.
+if not state or state.source == "statusline" then
+	local raw = desktop.read(opts.desktop_path, opts.desktop_org)
+	local st = raw and normalize.from_desktop(raw, now)
+	-- skip a Desktop sample older than the last real result or the statusLine cache
+	if
+		st
+		and normalize.has_data(st)
+		and not (last.state and (last.state.fetched_at or 0) > st.fetched_at)
+		and not (state and (state.fetched_at or 0) >= st.fetched_at)
+	then
+		state = normalize.borrow_resets(st, normalize.reset_refs({ last.state }, samples), now)
+		state.source = "desktop"
 		fresh = true
 	end
 end
@@ -206,9 +231,10 @@ state = normalize.expire(state or { scoped = {} }, now)
 state.error = err
 state.stale = state.fetched_at ~= nil and (now - state.fetched_at) > opts.stale_after
 
-if opts.history then
-	local samples = history.load(opts.history_path)
-	if fresh and (state.source == "api" or state.source == "statusline") and not state.stale then
+if samples then
+	local recorded = state.source == "api" or state.source == "statusline" or state.source == "desktop"
+	if fresh and recorded and not state.stale then
+		-- Desktop samples are recorded once each, at their own time (see model.lua record()).
 		local t = state.fetched_at or now
 		local newest = samples[#samples]
 		if not newest or t - newest.t >= 30 then
@@ -236,11 +262,20 @@ if opts.sessions then
 end
 
 -- persist for the next call (only real fetches refresh the timestamp)
-if state.source == "api" or state.source == "statusline" then
+if state.source == "api" or state.source == "statusline" or state.source == "desktop" then
 	last.state = state
 	last.fetched_at = state.fetched_at or now
 end
 write_json(last_path, last)
+
+-- Session cost and API-key mode are recomputed on every call, never persisted.
+if (opts.context_max_age or 0) > 0 then
+	local raw = statusline_cache.read(opts.cache_path)
+	local cost = normalize.session_cost(raw)
+	state.session_cost = cost and cost.at and now - cost.at <= opts.context_max_age and cost or nil
+	local creds_ok = credentials.read(opts.credentials_path, now) ~= nil
+	state.api_key_mode = normalize.api_key_mode(raw, creds_ok, now, opts.context_max_age) or nil
+end
 
 local level = format.state_level(state, opts.thresholds)
 if mode == "json" then
@@ -250,7 +285,7 @@ elseif mode == "lines" then
 elseif mode == "waybar" then
 	local class = level
 	if not format.has_data(state) then
-		class = "error"
+		class = state.api_key_mode and "api_key" or "error"
 	elseif state.stale then
 		class = "stale"
 	end

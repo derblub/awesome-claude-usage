@@ -6,6 +6,7 @@ M.version = "0.5.3"
 
 local home = os.getenv("HOME") or ""
 local xdg_cache = os.getenv("XDG_CACHE_HOME") or (home .. "/.cache")
+local xdg_config = os.getenv("XDG_CONFIG_HOME") or (home .. "/.config")
 
 M.defaults = {
 	-- Polling
@@ -15,11 +16,13 @@ M.defaults = {
 	timeout = 15, -- curl --max-time
 	backoff = { 300, 600, 1200, 1800 }, -- delays after consecutive 429/5xx/network errors
 	user_agent = "awesome-claude-usage/" .. M.version .. " (+https://github.com/derblub/awesome-claude-usage)",
-	sources = { "api", "statusline", "claude_json" }, -- priority order; drop entries to disable
+	sources = { "api", "statusline", "desktop", "claude_json" }, -- priority order; drop entries to disable
 	api_url = "https://api.anthropic.com/api/oauth/usage",
 	credentials_path = home .. "/.claude/.credentials.json",
 	claude_json_path = home .. "/.claude.json",
 	cache_path = xdg_cache .. "/claude-usage/rate_limits.json",
+	desktop_path = xdg_config .. "/Claude/plan-usage-history.json", -- written by Claude Desktop
+	desktop_org = nil, -- organisation uuid to read from the Desktop file; nil = newest sample of any
 	stale_after = 3600, -- data older than this is flagged as stale
 	fresh_cache_max_age = 120, -- a statusLine cache younger than this replaces an API call
 	curl_cmd = "curl",
@@ -33,8 +36,9 @@ M.defaults = {
 	attention_flag = " \226\154\145", -- U+2691 black flag
 	spend_in_bar = true, -- append the extra usage spent (" +3.53€") while it is being consumed
 	spend_flag = nil, -- fixed marker instead of the amount, e.g. " $"
+	cost_in_bar = "auto", -- append the session cost (" $1.23"): "auto" = in API-key mode only, true, false
 	watch_cache = true, -- react to the statusLine cache instantly via inotifywait (if installed)
-	context_max_age = 900, -- show the active session's context window while the cache is this fresh
+	context_max_age = 900, -- show the active session's context window and cost while the cache is this fresh
 	notify_attention = true, -- a session waits for a permission or an answer
 	notify_finished = false, -- a session went from working to idle
 

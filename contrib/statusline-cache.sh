@@ -4,7 +4,9 @@
 # Claude Code pipes a JSON document to the statusLine command on every turn.
 # This script stores the parts the widget can use in
 #   $XDG_CACHE_HOME/claude-usage/rate_limits.json   (default ~/.cache/...)
-#     { ts, rate_limits, context: { used_percentage, size, input_tokens }, model, session_id }
+#     { ts, rate_limits, context: { used_percentage, size, input_tokens }, cost: { total_usd },
+#       model, session_id }
+# rate_limits is null when Claude Code runs with an API key; context and cost are still stored.
 # and then hands the unchanged JSON to an optional downstream statusLine command.
 #
 # settings.json example (no existing statusline):
@@ -30,9 +32,12 @@ if command -v jq >/dev/null 2>&1; then
 				size: .context_window.context_window_size,
 				input_tokens: .context_window.total_input_tokens
 			} else null end),
+			cost: (if (.cost | type) == "object" and (.cost.total_cost_usd | type) == "number" then {
+				total_usd: .cost.total_cost_usd
+			} else null end),
 			model: .model.display_name,
 			session_id: .session_id
-		} | select(.rate_limits != null or .context != null)' 2>/dev/null) \
+		} | select(.rate_limits != null or .context != null or .cost != null)' 2>/dev/null) \
 			|| exit 0
 		[ -n "$out" ] || exit 0
 		tmp=$(mktemp "$cache_dir/.rate_limits.XXXXXX" 2>/dev/null) || exit 0

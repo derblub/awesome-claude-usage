@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- New data source `desktop`: Claude Desktop's `~/.config/Claude/plan-usage-history.json` (5-hour and
+  7-day percentages, newest sample, optionally of `desktop_org`). It is tried after the statusLine
+  cache and before `~/.claude.json` in the default `sources`; explicit `sources` lists are unchanged.
+  Reset times are borrowed from earlier data of the same cycle; Desktop samples are recorded in the
+  history once each.
+- API-key mode: when Claude Code runs with `ANTHROPIC_API_KEY` (fresh statusLine cache without
+  `rate_limits`, no usable OAuth token) the popup names the source and age of the subscription
+  values, and the bar shows `API` instead of `!cred` when there are none.
+- Session cost: the statusLine helper stores `cost.total_cost_usd`; the popup shows
+  "Session cost $1.23", the bar appends `$1.23` in API-key mode (`cost_in_bar`), and `cli.lua`
+  exposes `session_cost`, `api_key_mode` and the waybar class `api_key`.
+
 ### Changed
 - Notifications fall back to `naughty.notify` on awesome 4.3 stable; the README now states that
   stable 4.3 is untested.
@@ -17,6 +30,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The README lists every option with its default and explains `!parse`.
 
 ### Fixed
+- The statusLine helper also writes the cache when only the session cost is present, and
+  `cli.lua` no longer stops at a statusLine cache without rate limits (it tries the next source).
+- A missing or expired Claude Code login no longer shows "log in with `claude`" as an error when
+  the data comes from Claude Desktop or Claude Code runs with an API key.
+- A window whose reset passed while no new data came in says "reset passed, no new data yet"
+  instead of "no usage yet".
 - Polling could stop for good: when a fetch finished synchronously (still in the 429 backoff, fresh
   statusLine cache, no credentials), `gears.timer`'s `single_shot` stop ran after the callback and killed
   the freshly re-armed timer. The fetch timer is no longer `single_shot`, and the test timer now stops

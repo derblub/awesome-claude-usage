@@ -22,7 +22,8 @@ function M.read(path)
 	if not ok or type(data) ~= "table" then
 		return nil
 	end
-	if type(data.rate_limits) ~= "table" and type(data.context) ~= "table" then
+	-- API-key sessions have no rate_limits, only context and cost.
+	if type(data.rate_limits) ~= "table" and type(data.context) ~= "table" and type(data.cost) ~= "table" then
 		return nil
 	end
 	return data

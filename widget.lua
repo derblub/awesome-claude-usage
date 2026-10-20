@@ -158,9 +158,10 @@ function M.new(model, opts)
 			end
 		end
 		if opts.compact then
-			-- In compact mode bar_text holds only the flags (spend amount, attention); keep them
-			-- visible. Loading and error texts stay hidden, the chip colour shows those.
-			if plain == "" or not format.has_data(state) then
+			-- In compact mode bar_text holds only the flags (spend amount, cost, attention); keep them
+			-- visible. Loading and error texts stay hidden, the chip colour shows those; "API" (no
+			-- subscription data with an API key) stays.
+			if plain == "" or not (format.has_data(state) or (state and state.api_key_mode)) then
 				text = ""
 			end
 			textbox.visible = text ~= ""

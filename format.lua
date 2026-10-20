@@ -113,7 +113,7 @@ end
 function M.color_for(st, opts)
 	local colors = opts.colors or {}
 	if not M.has_data(st) then
-		if st and st.error then
+		if st and st.error and not st.api_key_mode then
 			return colors.error
 		end
 		return colors.normal
@@ -200,6 +200,33 @@ function M.short_names(names)
 	return out
 end
 
+--- Whether the bar shows the session cost: opts.cost_in_bar = "auto" (API-key mode only), true, false.
+---@param st table
+---@param opts table
+---@return boolean
+function M.shows_cost(st, opts)
+	local cost = st.session_cost
+	if type(cost) ~= "table" or type(cost.usd) ~= "number" then
+		return false
+	end
+	local mode = opts.cost_in_bar
+	if mode == nil or mode == "auto" then
+		return st.api_key_mode == true
+	end
+	return mode == true
+end
+
+--- Append the session cost (" $1.23", no "+": that marks extra usage) and the attention flag.
+local function flags(text, st, opts)
+	if M.shows_cost(st, opts) then
+		text = text .. " " .. M.money(st.session_cost.usd, "USD")
+	end
+	if opts.sessions_in_bar and st.sessions and (st.sessions.attention or 0) > 0 then
+		text = text .. (opts.attention_flag or " !")
+	end
+	return (text:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
 --- Plain text for the bar (no markup; the widget escapes it).
 ---@param st table|nil
 ---@param opts table resolved options
@@ -216,6 +243,10 @@ function M.bar_text(st, opts)
 		return glyph .. "…"
 	end
 	if not M.has_data(st) then
+		-- An API key has no subscription limits: say so instead of a credentials error.
+		if st.api_key_mode then
+			return flags(glyph .. "API", st, opts)
+		end
 		local eg = opts.show_glyph and (opts.error_glyph .. " ") or ""
 		if st.error then
 			return eg .. M.short_error(st.error.code)
@@ -263,10 +294,7 @@ function M.bar_text(st, opts)
 			or string.format("%d%%", M.percent(st.spend.percent or 0))
 		text = text .. (opts.spend_flag or (" +" .. amount))
 	end
-	if opts.sessions_in_bar and st.sessions and (st.sessions.attention or 0) > 0 then
-		text = text .. (opts.attention_flag or " !")
-	end
-	return (text:gsub("^%s+", ""):gsub("%s+$", ""))
+	return flags(text, st, opts)
 end
 
 --- One line for the active session's context window, nil when unknown.
@@ -351,7 +379,63 @@ function M.money(amount, currency)
 	return string.format("%.2f %s", amount, currency)
 end
 
-local SOURCE_NAME = { api = "API", statusline = "statusLine", claude_json = "claude.json cache" }
+local SOURCE_NAME = {
+	api = "API",
+	statusline = "statusLine",
+	desktop = "Claude Desktop",
+	claude_json = "claude.json cache",
+}
+
+--- Human readable name of a data source.
+function M.source_name(source)
+	return SOURCE_NAME[source] or tostring(source or "unknown")
+end
+
+--- "Session cost $1.23" (with " (API key)" in API-key mode), nil without a cost.
+---@param cost table|nil { usd }
+---@param api_key_mode boolean|nil
+---@return string|nil
+function M.session_cost_text(cost, api_key_mode)
+	if type(cost) ~= "table" or type(cost.usd) ~= "number" then
+		return nil
+	end
+	return "Session cost " .. M.money(cost.usd, "USD") .. (api_key_mode and " (API key)" or "")
+end
+
+--- Credential errors are expected without a Claude Code login (API key, Claude Desktop only);
+--- returns a calm note for those, nil for every other case.
+local function credential_note(st)
+	local code = type(st.error) == "table" and st.error.code or nil
+	if code ~= "no_credentials" and code ~= "unauthorized" then
+		return nil
+	end
+	if st.api_key_mode then
+		return "Claude Code uses an API key (no subscription login)"
+	elseif st.source == "desktop" then
+		return (code == "unauthorized" and "Claude Code login expired" or "No Claude Code login")
+			.. " – using Claude Desktop's data"
+	end
+	return nil
+end
+
+--- Muted info lines for the popup: where subscription data comes from in API-key mode, the
+--- session cost, and a credentials note. The second value is the error text still to show.
+---@return string[] notes
+---@return string|nil error
+local function notes_and_error(st, now)
+	local notes = {}
+	if st.api_key_mode and M.has_data(st) and st.fetched_at then
+		notes[#notes + 1] = "subscription data from " .. M.source_name(st.source) .. ", "
+			.. timeparse.age(st.fetched_at, now) .. (st.stale and " (stale)" or "")
+	end
+	notes[#notes + 1] = M.session_cost_text(st.session_cost, st.api_key_mode)
+	local note = credential_note(st)
+	if note then
+		notes[#notes + 1] = note
+		return notes, nil
+	end
+	return notes, st.error and M.error_text(st.error, now) or nil
+end
 
 --- Human readable error message for the popup.
 function M.error_text(err, now)
@@ -380,10 +464,11 @@ function M.error_text(err, now)
 end
 
 --- "resets in 2h 14m", "reset due" (in the past), "resets at <date>" (implausibly far away),
---- "no usage yet" (window not started) or nil.
+--- "no usage yet" (window not started), "reset passed, no new data yet" (normalize.expire) or nil
+--- (reset time unknown, e.g. Claude Desktop data).
 local function reset_text(w, now)
 	if w and w.assumed then
-		return "no usage yet"
+		return w.expired and "reset passed, no new data yet" or "no usage yet"
 	end
 	if not w or not w.resets_at then
 		return nil
@@ -470,7 +555,7 @@ function M.popup_lines(st, now, opts)
 			lines[#lines + 1] = text
 		end
 	else
-		lines[#lines + 1] = "No usage data"
+		lines[#lines + 1] = st.api_key_mode and "No subscription data (API key)" or "No usage data"
 	end
 
 	local context_line = M.context_text(st.context)
@@ -481,18 +566,22 @@ function M.popup_lines(st, now, opts)
 	if sessions_line then
 		lines[#lines + 1] = sessions_line
 	end
+	local notes, err_text = notes_and_error(st, now)
+	for _, note in ipairs(notes) do
+		lines[#lines + 1] = note
+	end
 	lines[#lines + 1] = ""
-	if st.fetched_at then
-		local src = SOURCE_NAME[st.source] or tostring(st.source or "unknown")
-		local line = "via " .. src .. ", " .. timeparse.age(st.fetched_at, now)
+	-- in API-key mode the notes already name the source and the age
+	if st.fetched_at and not (st.api_key_mode and M.has_data(st)) then
+		local line = "via " .. M.source_name(st.source) .. ", " .. timeparse.age(st.fetched_at, now)
 		if st.stale then
 			line = line .. " (stale)"
 		end
 		lines[#lines + 1] = line
 	end
-	if st.error then
+	if err_text then
 		local prefix_text = M.has_data(st) and "Last check failed: " or ""
-		lines[#lines + 1] = prefix_text .. (M.error_text(st.error, now) or "error")
+		lines[#lines + 1] = prefix_text .. err_text
 	end
 	if st.next_fetch_at then
 		local rel = time_until(st.next_fetch_at, now)
@@ -508,7 +597,7 @@ end
 function M.chip_color(st, opts)
 	local chip = opts.chip or {}
 	if not M.has_data(st) then
-		if st and st.error then
+		if st and st.error and not st.api_key_mode then
 			return chip.error or brand.palette.error
 		end
 		return chip.normal or brand.palette.orange
@@ -547,8 +636,7 @@ function M.popup_rows(st, now, opts)
 		sub[#sub + 1] = plan
 	end
 	if st.fetched_at then
-		local src = SOURCE_NAME[st.source] or tostring(st.source or "?")
-		sub[#sub + 1] = "via " .. src .. " " .. timeparse.age(st.fetched_at, now)
+		sub[#sub + 1] = "via " .. M.source_name(st.source) .. " " .. timeparse.age(st.fetched_at, now)
 	end
 	if st.stale then
 		sub[#sub + 1] = "stale"
@@ -604,10 +692,12 @@ function M.popup_rows(st, now, opts)
 			end
 		end
 	else
-		rows.empty = "No usage data"
+		rows.empty = st.api_key_mode and "No subscription data (Claude Code uses an API key)" or "No usage data"
 	end
 
 	rows.context = M.context_text(st.context)
+	local notes, err_text = notes_and_error(st, now)
+	rows.notes = notes
 	if st.sessions then
 		rows.sessions = {
 			text = M.sessions_text(st.sessions),
@@ -615,9 +705,7 @@ function M.popup_rows(st, now, opts)
 			list = st.sessions.list,
 		}
 	end
-	if st.error then
-		rows.error = M.error_text(st.error, now)
-	end
+	rows.error = err_text
 	if st.next_fetch_at then
 		local rel = time_until(st.next_fetch_at, now)
 		rows.footer[#rows.footer + 1] = rel and ("next check in " .. rel) or "checking…"
