@@ -168,6 +168,11 @@ function M.build(rows, opts, samples)
 		body:add(textbox(span(rows.context, c.muted), f_small))
 	end
 
+	-- Data source in API-key mode, session cost, credentials note
+	for _, note in ipairs(rows.notes or {}) do
+		body:add(textbox(span(note, c.muted), f_small))
+	end
+
 	-- Sessions
 	if rows.sessions and rows.sessions.text then
 		local color = rows.sessions.attention > 0 and c.warn or c.muted

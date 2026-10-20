@@ -119,7 +119,7 @@ function Notifier:update(st, now)
 		self.error_notified = false
 		self.last_error = nil
 		self.last_error_at = nil
-	elseif st.error then
+	elseif st.error and not st.api_key_mode then -- an API key has no subscription login to fail
 		-- redraw/poll_sessions re-emit the same state (same error table) every minute; count each
 		-- failed check once.
 		local at = type(st.error) == "table" and st.error.at or nil

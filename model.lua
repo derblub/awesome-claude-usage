@@ -15,6 +15,7 @@ local credentials = require(prefix .. "source.credentials")
 local api = require(prefix .. "source.api")
 local statusline_cache = require(prefix .. "source.statusline_cache")
 local claude_json = require(prefix .. "source.claude_json")
+local desktop = require(prefix .. "source.desktop")
 local history = require(prefix .. "history")
 local sessions_mod = require(prefix .. "sessions")
 
@@ -28,6 +29,7 @@ local _inflight = false
 local _setup = false
 local _last_good = nil
 local _creds = nil
+local _creds_ok = false -- the last credentials read found a usable token
 local _samples = nil -- history samples (nil when history is off)
 local _last_api = nil -- last state that came from the API (scoped limits, breakdown, spend)
 local _last_api_at = nil
@@ -105,16 +107,30 @@ local function current_interval()
 	return _opts.interval
 end
 
---- Attach forecast, pacing and session info to a state.
+--- Attach the active session's context window and cost, and whether Claude Code runs with an
+--- API key, from the statusLine cache.
 local function attach_context(st, t)
 	st.context = nil
-	if (_opts.context_max_age or 0) <= 0 then
+	st.session_cost = nil
+	st.api_key_mode = nil
+	local max_age = _opts.context_max_age or 0
+	if max_age <= 0 then
 		return
 	end
 	local raw = statusline_cache.read(_opts.cache_path)
-	local ctx = raw and normalize.context_from(raw) or nil
-	if ctx and ctx.at and t - ctx.at <= _opts.context_max_age then
+	if not raw then
+		return
+	end
+	local ctx = normalize.context_from(raw)
+	if ctx and ctx.at and t - ctx.at <= max_age then
 		st.context = ctx
+	end
+	local cost = normalize.session_cost(raw)
+	if cost and cost.at and t - cost.at <= max_age then
+		st.session_cost = cost
+	end
+	if normalize.api_key_mode(raw, _creds_ok, t, max_age) then
+		st.api_key_mode = true
 	end
 end
 
@@ -147,22 +163,35 @@ local function attach_analysis(st, t)
 end
 
 local function record(st, t)
-	if _samples and not st.fallback and (st.source == "api" or st.source == "statusline") and not is_stale(st, t) then
-		local last = _samples[#_samples]
+	if not _samples or st.fallback or is_stale(st, t) then
+		return
+	end
+	local last = _samples[#_samples]
+	if st.source == "api" or st.source == "statusline" then
 		if not last or t - last.t >= 30 then
 			history.append(_opts.history_path, _samples, st, t)
+		end
+	elseif st.source == "desktop" and st.fetched_at then
+		-- A Desktop sample is a real measurement with its own time: record each one once, and only
+		-- when it is newer than everything recorded so far (keeps the file in time order).
+		if not last or st.fetched_at - last.t >= 30 then
+			history.append(_opts.history_path, _samples, st, st.fetched_at)
 		end
 	end
 end
 
---- The statusLine only carries the two main windows. Keep the per-model limits, the
---- breakdown and the spend from the last API answer while the weekly cycle is the same.
+--- The statusLine and Claude Desktop only carry the two main windows. Keep the per-model
+--- limits, the breakdown and the spend from the last API answer while the weekly cycle is the same.
 local function merge_api_details(st, t)
-	if st.source ~= "statusline" or not _last_api then
+	if (st.source ~= "statusline" and st.source ~= "desktop") or not _last_api then
 		return
 	end
 	-- A missing or assumed weekly window, or a past API reset, means a new cycle may have started.
 	if not st.seven_day or st.seven_day.assumed then
+		return
+	end
+	-- Desktop samples have no reset time of their own; only a borrowed one ties them to the cycle.
+	if st.source == "desktop" and not st.seven_day.resets_at then
 		return
 	end
 	if _last_api.seven_day and _last_api.seven_day.resets_at and _last_api.seven_day.resets_at <= t then
@@ -229,6 +258,7 @@ end
 --- Credentials, or the plan fields of an expired token (credentials.read's third value).
 local function read_credentials(t)
 	local creds, err, partial = credentials.read(_opts.credentials_path, t)
+	_creds_ok = creds ~= nil
 	if creds then
 		_creds = creds
 	elseif type(partial) == "table" and (partial.subscription or partial.tier) then
@@ -237,8 +267,31 @@ local function read_credentials(t)
 	return creds, err
 end
 
+--- A Claude Desktop sample with reset times borrowed from earlier data of the same cycle.
+local function read_desktop(t)
+	local raw = desktop.read(_opts.desktop_path, _opts.desktop_org)
+	if not raw then
+		return nil
+	end
+	local st = normalize.from_desktop(raw, t)
+	-- Older than what is already shown (e.g. an API answer a minute ago): not news.
+	if _last_good and _last_good.fetched_at and st.fetched_at < _last_good.fetched_at then
+		return nil
+	end
+	local states = {}
+	if _last_good then
+		states[#states + 1] = _last_good
+	end
+	if _last_api then
+		states[#states + 1] = _last_api
+	end
+	return normalize.borrow_resets(st, normalize.reset_refs(states, _samples), t)
+end
+
 local function read_file_source(name, t)
-	if name == "statusline" then
+	if name == "desktop" then
+		return read_desktop(t)
+	elseif name == "statusline" then
 		local raw = statusline_cache.read(_opts.cache_path)
 		if raw then
 			return normalize.from_statusline(raw, t)
@@ -250,6 +303,26 @@ local function read_file_source(name, t)
 		end
 	end
 	return nil
+end
+
+--- The newest state among the file sources from position i on; on equal age the earlier source
+--- wins. A statusLine cache left over from the last Claude Code session must not hide fresher
+--- Claude Desktop data (or the other way round).
+local function newest_file_state(i, t)
+	local best
+	for j = i, #_opts.sources do
+		local name = _opts.sources[j]
+		if name == "statusline" or name == "desktop" or name == "claude_json" then
+			local st = read_file_source(name, t)
+			if st and normalize.has_data(st) then
+				st.source = name
+				if not best or (st.fetched_at or 0) > (best.fetched_at or 0) then
+					best = st
+				end
+			end
+		end
+	end
+	return best
 end
 
 local try_source
@@ -343,13 +416,12 @@ try_source = function(i, err, delay)
 	end
 	if name == "api" then
 		return fetch_api(i, err, delay)
-	elseif name == "statusline" or name == "claude_json" then
-		local st = read_file_source(name, now())
-		if st and normalize.has_data(st) then
-			st.source = name
+	elseif name == "statusline" or name == "desktop" or name == "claude_json" then
+		local st = newest_file_state(i, now())
+		if st then
 			return finalize(st, delay, err)
 		end
-		return try_source(i + 1, err, delay)
+		return finalize(fallback_state(), delay, err or { code = "no_source", at = now() })
 	end
 	warn("unknown source '" .. tostring(name) .. "'")
 	return try_source(i + 1, err, delay)
@@ -375,22 +447,17 @@ end
 --- Paint something immediately from the file sources, before the first API fetch.
 local function prime_from_cache()
 	local t = now()
-	for _, name in ipairs(_opts.sources) do
-		if name ~= "api" then
-			local st = read_file_source(name, t)
-			if st and normalize.has_data(st) then
-				st.source = name
-				st.stale = is_stale(st, t)
-				st.subscription = _creds and _creds.subscription or nil
-				_last_good = st
-				st = normalize.expire(st, t)
-				attach_analysis(st, t)
-				st.next_fetch_at = t + (_opts.initial_delay or 0)
-				set_state(st)
-				return
-			end
-		end
+	local st = newest_file_state(1, t)
+	if not st then
+		return
 	end
+	st.stale = is_stale(st, t)
+	st.subscription = _creds and _creds.subscription or nil
+	_last_good = st
+	st = normalize.expire(st, t)
+	attach_analysis(st, t)
+	st.next_fetch_at = t + (_opts.initial_delay or 0)
+	set_state(st)
 end
 
 local function redraw()
@@ -654,6 +721,7 @@ function M.stop()
 	_setup = false
 	_last_good = nil
 	_creds = nil
+	_creds_ok = false
 	_notifier = nil
 	M.state = nil
 end

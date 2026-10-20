@@ -1,4 +1,4 @@
--- normalize.lua - turn the three raw data formats into one canonical state table (pure Lua).
+-- normalize.lua - turn the four raw data formats into one canonical state table (pure Lua).
 --
 -- Canonical state (fields filled by model.lua are marked *):
 --   five_hour  = { percent, resets_at, is_active, assumed } | nil
@@ -7,7 +7,9 @@
 --   spend      = { enabled, percent, used, currency, limit } | nil
 --   breakdown  = { { name, percent }, ... } | nil
 --   fetched_at = epoch
---   source*, stale*, error*, next_fetch_at*, subscription*, fallback*
+--   context    = { percent, size, input_tokens, model, session_id, at } | nil
+--   session_cost* = { usd, at, session_id } | nil
+--   source*, stale*, error*, next_fetch_at*, subscription*, fallback*, api_key_mode*
 
 local prefix = (...):match("^(.*%.)") or ""
 local timeparse = require(prefix .. "timeparse")
@@ -240,12 +242,140 @@ function M.from_claude_json(raw, now)
 	return st
 end
 
+--- Normalise the newest sample of Claude Desktop's plan-usage-history.json (see source/desktop.lua).
+--- The file carries no reset times; model.lua borrows them from earlier data where it can.
+---@param raw table { t = epoch ms, u = { fh, sd } }
+---@param now integer
+---@return table state
+function M.from_desktop(raw, now)
+	local st = { scoped = {}, fetched_at = now }
+	if type(raw) ~= "table" or type(raw.u) ~= "table" then
+		return st
+	end
+	st.five_hour = window(percent(raw.u.fh), nil)
+	st.seven_day = window(percent(raw.u.sd), nil)
+	local t = epoch_seconds(raw.t)
+	if t then
+		st.fetched_at = t
+	end
+	return st
+end
+
+--- Cost of the active Claude Code session from the statusLine cache (nil when absent).
+---@param raw table
+---@return table|nil { usd, at, session_id }
+function M.session_cost(raw)
+	if type(raw) ~= "table" or type(raw.cost) ~= "table" then
+		return nil
+	end
+	local usd = tonumber(raw.cost.total_usd)
+	if usd == nil or usd ~= usd or usd < 0 then
+		return nil
+	end
+	return { usd = usd, at = epoch_seconds(raw.ts), session_id = raw.session_id }
+end
+
+--- Whether Claude Code runs with an API key: a fresh statusLine cache without rate limits (they
+--- only exist for subscription logins) while no usable OAuth login exists.
+---@param raw table|nil statusLine cache
+---@param creds_ok boolean a valid OAuth token was found
+---@param now integer
+---@param max_age number seconds the cache counts as fresh
+---@return boolean
+function M.api_key_mode(raw, creds_ok, now, max_age)
+	if creds_ok or type(raw) ~= "table" or type(raw.rate_limits) == "table" then
+		return false
+	end
+	local ts = epoch_seconds(raw.ts)
+	if not ts or now - ts > (max_age or 0) then
+		return false
+	end
+	return M.context_from(raw) ~= nil or M.session_cost(raw) ~= nil
+end
+
+local WINDOW_LENGTH = { five_hour = 5 * 3600, seven_day = 7 * 86400 }
+M.WINDOW_LENGTH = WINDOW_LENGTH
+
+--- Percentage points a borrowing window may lie below its reference (rounding, other sources).
+M.BORROW_TOLERANCE = 2
+
+--- Reference points for borrow_resets: the main windows of earlier states and the newest history
+--- sample per window that has a reset time.
+---@param states table[] earlier states
+---@param samples table|nil history samples ({ t, key, percent, resets_at })
+---@return table refs { five_hour = { { percent, resets_at, at }, ... }, seven_day = { ... } }
+function M.reset_refs(states, samples)
+	local refs = { five_hour = {}, seven_day = {} }
+	for _, st in ipairs(states or {}) do
+		if type(st) == "table" then
+			for key, list in pairs(refs) do
+				local w = st[key]
+				if type(w) == "table" and w.resets_at and type(w.percent) == "number" then
+					list[#list + 1] = { percent = w.percent, resets_at = w.resets_at, at = st.fetched_at }
+				end
+			end
+		end
+	end
+	for key, list in pairs(refs) do
+		for i = #(samples or {}), 1, -1 do
+			local s = samples[i]
+			if s.key == key and s.resets_at and type(s.percent) == "number" then
+				list[#list + 1] = { percent = s.percent, resets_at = s.resets_at, at = s.t }
+				break
+			end
+		end
+	end
+	return refs
+end
+
+--- Fill in missing reset times from the newest reference of the same cycle: its reset is still
+--- ahead, the sample lies inside that cycle, and the percentage did not drop (a drop means a new
+--- cycle started). Windows that cannot be matched keep resets_at = nil. Returns a shallow copy.
+---@param st table
+---@param refs table from reset_refs
+---@param now integer
+---@return table state
+function M.borrow_resets(st, refs, now)
+	if type(st) ~= "table" then
+		return st
+	end
+	local out = {}
+	for k, v in pairs(st) do
+		out[k] = v
+	end
+	local at = st.fetched_at or now
+	for key, length in pairs(WINDOW_LENGTH) do
+		local w = st[key]
+		if type(w) == "table" and w.resets_at == nil and not w.assumed then
+			local best = nil
+			for _, r in ipairs((refs or {})[key] or {}) do
+				if best == nil or (r.at or 0) > (best.at or 0) then
+					best = r
+				end
+			end
+			if best
+				and best.resets_at > now
+				and at >= best.resets_at - length
+				and w.percent >= best.percent - M.BORROW_TOLERANCE
+			then
+				local copy = {}
+				for k, v in pairs(w) do
+					copy[k] = v
+				end
+				copy.resets_at = best.resets_at
+				out[key] = copy
+			end
+		end
+	end
+	return out
+end
+
 local function expired(w, now)
 	return type(w) == "table" and w.resets_at ~= nil and w.resets_at <= now
 end
 
 --- Reset windows whose reset time has passed: 0 %, assumed, no reset time (like a window the
---- statusLine dropped). Returns a shallow copy; the input and its windows are not modified.
+--- statusLine dropped), and `expired` so the popup can say no data came in since. Returns a shallow copy; the input and its windows are not modified.
 ---@param st table|nil
 ---@param now integer
 ---@return table|nil state
@@ -259,14 +389,14 @@ function M.expire(st, now)
 	end
 	for _, key in ipairs({ "five_hour", "seven_day" }) do
 		if expired(st[key], now) then
-			out[key] = { percent = 0, resets_at = nil, assumed = true }
+			out[key] = { percent = 0, resets_at = nil, assumed = true, expired = true }
 		end
 	end
 	if type(st.scoped) == "table" then
 		out.scoped = {}
 		for i, w in ipairs(st.scoped) do
 			if expired(w, now) then
-				out.scoped[i] = { name = w.name, kind = w.kind, percent = 0, resets_at = nil, assumed = true }
+				out.scoped[i] = { name = w.name, kind = w.kind, percent = 0, resets_at = nil, assumed = true, expired = true }
 			else
 				out.scoped[i] = w
 			end

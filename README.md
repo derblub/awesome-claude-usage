@@ -63,10 +63,14 @@ click opens Claude Code.
 - Pinned popups close with Escape or a click anywhere; a key binding can open the popup
 - `cli.lua` prints the same data for waybar, polybar, tmux or your prompt
 - Left click opens a terminal with `claude` (configurable), right click refreshes, middle click pins the popup
-- Three data sources with automatic fallback:
+- Four data sources with automatic fallback:
   1. Claude Code's OAuth usage endpoint (`api.anthropic.com/api/oauth/usage`)
   2. a cache file written by the Claude Code **statusLine** (see below), no network needed
-  3. `~/.claude.json`, Claude Code's own cached copy of the last `/usage` result
+  3. **Claude Desktop**'s own usage samples (`~/.config/Claude/plan-usage-history.json`),
+     for people who use the Desktop app or run Claude Code with an API key
+  4. `~/.claude.json`, Claude Code's own cached copy of the last `/usage` result
+- API-key mode: with Claude Code on `ANTHROPIC_API_KEY` the bar shows the subscription values
+  that are still available (with their age) plus the session cost (`$1.23`), or `API $1.23`
 - Exponential backoff on HTTP 429 and network errors; the bar never hammers the endpoint
 - Reads the OAuth token only. It never refreshes or writes it, so it cannot log you out.
 - Pure Lua (5.1 to 5.4 and LuaJIT), no LuaRocks dependencies; `curl` is the only external tool (`jq` for the optional
@@ -129,11 +133,13 @@ claude_usage.new({
     timeout       = 15,       -- curl --max-time
     backoff       = { 300, 600, 1200, 1800 }, -- delays after consecutive 429/5xx/network errors
     user_agent    = "awesome-claude-usage/<version> (+https://github.com/derblub/awesome-claude-usage)", -- curl -A
-    sources       = { "api", "statusline", "claude_json" }, -- priority; remove entries to disable
+    sources       = { "api", "statusline", "desktop", "claude_json" }, -- priority; remove entries to disable
     api_url       = "https://api.anthropic.com/api/oauth/usage", -- the usage endpoint Claude Code calls for /usage
     credentials_path = os.getenv("HOME") .. "/.claude/.credentials.json",
     claude_json_path = os.getenv("HOME") .. "/.claude.json",
     cache_path    = (os.getenv("XDG_CACHE_HOME") or os.getenv("HOME") .. "/.cache") .. "/claude-usage/rate_limits.json",
+    desktop_path  = (os.getenv("XDG_CONFIG_HOME") or os.getenv("HOME") .. "/.config") .. "/Claude/plan-usage-history.json",
+    desktop_org   = nil,      -- organisation uuid in the Desktop file; nil = the newest sample of any
     stale_after   = 3600,     -- cached data older than this is marked "(stale)"
     fresh_cache_max_age = 120, -- a statusLine cache younger than this replaces the API call
                               -- (the API is still asked at least every interval_idle)
@@ -148,8 +154,9 @@ claude_usage.new({
     attention_flag = " \226\154\145", -- U+2691 black flag
     spend_in_bar  = true,     -- append the extra usage spent (" +3.53€") while it is being consumed
     spend_flag    = nil,      -- a fixed marker instead of the amount, e.g. " $"
+    cost_in_bar   = "auto",   -- append the session cost (" $1.23"): "auto" = in API-key mode only, true, false
     watch_cache   = true,     -- read the statusLine cache the moment it changes (needs inotifywait)
-    context_max_age = 900,    -- show the active session's context window while the cache is this fresh
+    context_max_age = 900,    -- show the active session's context window and cost while the cache is this fresh
     notify_attention = true,  -- a session waits for a permission or an answer
     notify_finished = false,  -- a session went from working to idle
 
@@ -279,8 +286,12 @@ The state table:
     pace       = { five_hour = 20, seven_day = 55 },   -- percent an even spread would be at now
     sessions   = { total = 2, working = 1, idle = 1, attention = 0, list = { ... } },
     fetched_at = 1758560000,  -- epoch seconds when the data was produced
-    source     = "api",       -- "api" | "statusline" | "claude_json"
+    source     = "api",       -- "api" | "statusline" | "desktop" | "claude_json"
     stale      = false,
+    fallback   = nil,         -- true: every source failed, this is the last good data again
+    context    = { percent = 41, size = 1000000, model = "Fable", at = 1758559990 },  -- or nil
+    session_cost = { usd = 1.23, at = 1758559990, session_id = "..." },             -- or nil
+    api_key_mode = nil,       -- true: Claude Code runs with an API key (no subscription login)
     error      = nil,         -- or { code = "rate_limited", message = "...", retry_at = ... }
     next_fetch_at = 1758560300,
     subscription  = "max",
@@ -321,9 +332,9 @@ the widget marks it stale after an hour and prefers the API when that works.
 To rely on the cache alone (no network at all): `sources = { "statusline" }`.
 
 The helper also stores the active session's context window (`used_percentage`, size,
-input tokens), the model name and the session id. The popup shows them as
+input tokens), the session cost (`cost.total_cost_usd`), the model name and the session id. The popup shows them as
 "Active session: 41% of 1M context (Fable)" while the cache is younger than
-`context_max_age`. With `inotify-tools` installed the widget picks up every rewrite
+`context_max_age`, and "Session cost $1.23". With `inotify-tools` installed the widget picks up every rewrite
 of the cache instantly (`watch_cache`); otherwise it reads it on the next fetch.
 
 ## The hook (instant "needs your attention")
@@ -370,7 +381,8 @@ files only. Waybar example:
 }
 ```
 
-The `class` is `normal`, `warn`, `crit`, `stale` or `error` for styling.
+The `class` is `normal`, `warn`, `crit`, `stale` or `error` for styling, and `api_key`
+when Claude Code runs with an API key and no subscription data exists at all.
 
 ## Forecast and pacing
 
@@ -413,7 +425,36 @@ documented and it rate-limits aggressively: too many calls and it answers
   least every `interval_idle` for the details only it has (per-model limits, breakdown, spend),
 - backs off exponentially after a 429, 5xx or network error (5, 10, 20, 30 minutes),
 - refuses a forced refresh (right click) while backing off and says so in the popup,
-- falls back to the statusLine cache and `~/.claude.json` so the bar keeps showing numbers.
+- falls back to the statusLine cache, Claude Desktop's samples and `~/.claude.json` so the bar
+  keeps showing numbers. When every source fails it keeps the last good numbers, with their age in
+  the popup; a window whose reset passed in the meantime shows 0 % and "reset passed, no new data yet".
+
+### Claude Desktop
+
+Claude Desktop (Linux) writes `~/.config/Claude/plan-usage-history.json` about every 15 minutes:
+the 5-hour and 7-day percentages, with a timestamp, per organisation. The format is not
+documented, so the widget reads it defensively and skips anything unexpected. It takes the newest
+sample (of `desktop_org`, if set) and polls the file with the normal interval; it is used when the
+API and the statusLine cache have nothing, and only when it is newer than the data already shown.
+
+The file has no reset times. The widget borrows them from the last API/statusLine answer or the
+history file while that reset is still ahead and the Desktop percentage has not dropped (a drop
+means a new cycle started); otherwise the popup simply shows no reset time. Desktop samples are
+recorded in `history.csv` once each, so the forecast keeps working.
+
+### API-key mode
+
+Claude Code with `ANTHROPIC_API_KEY` has no subscription login: no OAuth token, and the statusLine
+JSON has no `rate_limits`. The widget recognises this (a fresh statusLine cache without rate limits
+and no usable token) and then
+
+- shows the subscription values that are still available (Claude Desktop, the last good data)
+  with their age: "subscription data from Claude Desktop, 12 min ago",
+- shows the session cost from the statusLine helper: "Session cost $1.23 (API key)", and in the
+  bar `$1.23` (`cost_in_bar`; `"auto"` shows it in API-key mode only, `true` always),
+- shows `API $1.23` instead of `!cred` when no subscription data exists at all.
+
+The cost has no `+`, so it cannot be mistaken for paid extra usage (`+$3.53`).
 
 The access token comes from `~/.claude/.credentials.json`. Claude Code refreshes
 that token itself when you run it; this widget deliberately does **not**
@@ -428,14 +469,16 @@ any `claude` command and the next check succeeds.
   `$XDG_RUNTIME_DIR/claude-usage/`, removed after each request), never on its
   command line, so it does not show up in the process list. It is never logged,
   stored elsewhere or sent anywhere except `api.anthropic.com`.
-- Nothing is written to `~/.claude/`. The project writes only under
+- Nothing is written to `~/.claude/` or `~/.config/Claude/`;
+  `~/.config/Claude/plan-usage-history.json` (Claude Desktop's usage percentages) is only read.
+  The project writes only under
   `~/.cache/claude-usage/`: `rate_limits.json` (statusLine helper), `history.csv`
   (usage samples: time, window, percent) and `last.json` (CLI result cache).
 - `~/.claude/sessions/*.json` is read for session names, states and working directories;
   none of it leaves the machine.
 - The optional hook passes only the event name, the notification type and the session id
-  to `awesome-client`; the statusLine helper stores the context percentage, the model name
-  and the session id next to the rate limits.
+  to `awesome-client`; the statusLine helper stores the context percentage, the session cost,
+  the model name and the session id next to the rate limits.
 - No third-party services are involved.
 
 ## Troubleshooting
@@ -443,7 +486,9 @@ any `claude` command and the next check succeeds.
 | Bar shows | Meaning | What to do |
 |---|---|---|
 | `!auth` | token expired or rejected (401/403) | run any `claude` command, wait for the next check or right-click |
-| `!cred` | `~/.claude/.credentials.json` missing or unreadable | log in with `claude` |
+| `!cred` | `~/.claude/.credentials.json` missing or unreadable, and no other source has data | log in with `claude`; with an API key or Claude Desktop only, install the statusLine helper or use Desktop so the widget has data |
+| `API` / `API $1.23` | Claude Code runs with an API key and no subscription data exists; the amount is the session cost | nothing to do; Claude Desktop's data appears once its file exists |
+| `$1.23` after the numbers | session cost (API-key mode, or `cost_in_bar = true`) | `cost_in_bar = false` hides it |
 | `!429` | rate limited and no cached data | wait; do not lower `interval` |
 | `!net` | curl failed or 5xx, no cached data | check connectivity; the widget retries with backoff |
 | `!parse` | the endpoint answered something unexpected (not JSON, no HTTP status, or an HTTP code other than 200/401/403/429/5xx), no cached data | check the popup for the HTTP code; if it persists the undocumented endpoint may have changed, open an issue with the `debug()` dump |
