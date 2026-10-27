@@ -12,20 +12,62 @@ M.STATUS = {
 	needs_input = "attention",
 }
 
-local function default_list(dir)
+local SESSION_FILE = "^%d+%.json$"
+
+-- Gio (via lgi) lists the directory in-process; inside Awesome lgi is always there.
+local gio_ok, Gio = pcall(function()
+	return require("lgi").Gio
+end)
+
+local function list_gio(dir)
+	local names = {}
+	local ok, enum = pcall(function()
+		return Gio.File.new_for_path(dir):enumerate_children("standard::name", Gio.FileQueryInfoFlags.NONE)
+	end)
+	if not ok or not enum then
+		return names -- missing directory: no sessions
+	end
+	while true do
+		local info = enum:next_file()
+		if not info then
+			break
+		end
+		local name = info:get_name()
+		if name:match(SESSION_FILE) then
+			names[#names + 1] = name
+		end
+	end
+	enum:close()
+	return names
+end
+
+-- Fallback without lgi (plain Lua outside Awesome, e.g. LuaJIT for cli.lua): one `ls` per scan.
+local function list_ls(dir)
 	local names = {}
 	local p = io.popen('ls -1 -- "' .. dir:gsub('"', '\\"') .. '" 2>/dev/null')
 	if not p then
 		return names
 	end
 	for line in p:lines() do
-		if line:match("^%d+%.json$") then
+		if line:match(SESSION_FILE) then
 			names[#names + 1] = line
 		end
 	end
 	p:close()
 	return names
 end
+
+--- Session file names (`<pid>.json`) in dir; empty if the directory does not exist.
+---@param dir string
+---@return string[]
+function M.list_dir(dir)
+	if gio_ok and Gio then
+		return list_gio(dir)
+	end
+	return list_ls(dir)
+end
+
+M._list_ls = list_ls
 
 local function default_alive(pid)
 	local f = io.open("/proc/" .. tostring(pid) .. "/stat", "r")
@@ -43,7 +85,7 @@ end
 ---@return table summary { total, working, idle, attention, list = { {pid, name, status, kind, cwd, since} } }
 function M.read(dir, now, deps)
 	deps = deps or {}
-	local list = deps.list or default_list
+	local list = deps.list or M.list_dir
 	local alive = deps.alive or default_alive
 	local out = { total = 0, working = 0, idle = 0, attention = 0, list = {} }
 	for _, name in ipairs(list(dir)) do

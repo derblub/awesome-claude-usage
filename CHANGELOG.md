@@ -22,6 +22,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Option `cost_separator` (default `" │ "`) between the usage and the session cost in the bar.
 
 ### Changed
+- The session scan no longer forks a shell: inside Awesome the directory is listed in-process with
+  Gio (lgi), so the 10-second scan no longer blocks the main loop on `fork()`. Plain Lua without lgi
+  (e.g. `cli.lua` under LuaJIT) still falls back to `ls`.
 - API-key mode presentation: the bar reads `5h 1% · 7d 99% │ $4.57` (`API │ $4.57` without
   subscription data) so the session cost is not taken for a balance; the popup no longer repeats
   the header's source and age as a "subscription data from …" note and drops the

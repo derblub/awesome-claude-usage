@@ -27,6 +27,29 @@ describe("sessions.read", function()
 	end)
 end)
 
+describe("sessions.list_dir", function()
+	local function sorted(t)
+		table.sort(t)
+		return table.concat(t, ",")
+	end
+
+	it("lists only <pid>.json files", function()
+		os.execute("mkdir -p spec/tmp/sessions-list && touch spec/tmp/sessions-list/notes.txt")
+		local names = sessions.list_dir(DIR)
+		assert_eq(sorted(names), "100.json,200.json,300.json,400.json")
+		assert_eq(#sessions.list_dir("spec/tmp/sessions-list"), 0)
+	end)
+
+	it("returns an empty list for a missing directory", function()
+		assert_eq(#sessions.list_dir("spec/fixtures/nope"), 0)
+	end)
+
+	it("ls fallback agrees with the default lister", function()
+		assert_eq(sorted(sessions._list_ls(DIR)), sorted(sessions.list_dir(DIR)))
+		assert_eq(#sessions._list_ls("spec/fixtures/nope"), 0)
+	end)
+end)
+
 describe("sessions.diff", function()
 	it("reports attention and finished transitions", function()
 		local old = {
