@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-27
+
 ### Added
 - New data source `desktop`: Claude Desktop's `~/.config/Claude/plan-usage-history.json` (5-hour and
   7-day percentages, newest sample, optionally of `desktop_org`). It is tried after the statusLine
@@ -162,6 +164,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Desktop notifications when a window crosses the warn/crit thresholds.
 - `contrib/statusline-cache.sh` helper for the Claude Code statusLine.
 
+[0.6.0]: https://github.com/derblub/awesome-claude-usage/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/derblub/awesome-claude-usage/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/derblub/awesome-claude-usage/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/derblub/awesome-claude-usage/compare/v0.5.0...v0.5.1
