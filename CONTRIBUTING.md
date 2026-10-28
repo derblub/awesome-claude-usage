@@ -47,8 +47,8 @@ make          # luacheck + tests on Lua 5.4, LuaJIT and Lua 5.1
 | `format.lua`, `brand.lua`, `timeparse.lua`, `backoff.lua`, `notify.lua`, `config.lua` | yes | pure helpers |
 | `source/*.lua` | yes | credentials, curl, cache readers |
 | `cli.lua` | yes | standalone entry point for waybar, polybar, tmux |
-| `contrib/statusline-cache.sh` | – | Claude Code statusLine helper (rate limits, context window) |
-| `contrib/claude-usage-hook.sh` | – | Claude Code hook that pokes the widget via awesome-client |
+| `contrib/statusline-cache.sh` | n/a (shell) | Claude Code statusLine helper (rate limits, context window) |
+| `contrib/claude-usage-hook.sh` | n/a (shell) | Claude Code hook that pokes the widget via awesome-client |
 
 Keep the pure modules free of `require("awful")` and friends so they stay testable.
 Anything that touches awesome goes through the `deps` table that `init.lua` builds.

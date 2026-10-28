@@ -1,16 +1,38 @@
-<h1 align="center">awesome-claude-usage</h1>
+<div align="center">
 
-<p align="center">
-  Your Claude Code limits, right in the AwesomeWM bar.
+<a href="https://pushingpixels.at">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-light.svg">
+    <img src="docs/assets/logo.svg" alt="Pushing Pixels" width="96">
+  </picture>
+</a>
+
+<h1>awesome-claude-usage</h1>
+
+<p><strong>Your Claude Code 5-hour and weekly limits in the AwesomeWM bar.</strong></p>
+
+<p>
+  <a href="https://github.com/derblub/awesome-claude-usage/actions/workflows/ci.yml"><img src="https://github.com/derblub/awesome-claude-usage/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/derblub/awesome-claude-usage/releases"><img src="https://img.shields.io/github/v/release/derblub/awesome-claude-usage?cacheSeconds=3600" alt="Release"></a>
+  <a href="#requirements"><img src="https://img.shields.io/badge/lua-5.1--5.4%20%7C%20LuaJIT-blue?logo=lua" alt="Lua 5.1 to 5.4 and LuaJIT"></a>
+  <a href="https://www.reddit.com/r/awesomewm/comments/1wnzmmk/awesomeclaudeusage_claude_code_rate_limits_5h_7d/"><img src="https://img.shields.io/badge/discuss-r%2Fawesomewm-FF4500?logo=reddit&logoColor=white" alt="Discuss on r/awesomewm"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/derblub/awesome-claude-usage/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/derblub/awesome-claude-usage/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/derblub/awesome-claude-usage/releases"><img alt="Release" src="https://img.shields.io/github/v/release/derblub/awesome-claude-usage?color=D97757"></a>
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-FAF9F5?labelColor=1F1E1D"></a>
-  <img alt="Lua 5.1-5.4 / LuaJIT" src="https://img.shields.io/badge/lua-5.1--5.4%20%7C%20LuaJIT-1F1E1D?logo=lua">
-  <a href="https://www.reddit.com/r/awesomewm/comments/1wnzmmk/awesomeclaudeusage_claude_code_rate_limits_5h_7d/"><img alt="Discussed on r/awesomewm" src="https://img.shields.io/badge/r%2Fawesomewm-discussion-FF4500?logo=reddit&logoColor=white"></a>
+<p>
+  <a href="#installation">Install</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#the-statusline-helper-fresh-data-without-network-calls">statusLine helper</a> ·
+  <a href="#cli-waybar-polybar-tmux">CLI</a> ·
+  <a href="#forecast-and-pacing">Forecast</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
 </p>
+
+</div>
+
+---
 
 <p align="center">
   <img src="docs/hero.png" alt="The widget in the bar and its popup" width="720">
@@ -519,7 +541,7 @@ make lint     # luacheck (install via luarocks)
 The pure modules (`normalize`, `format`, `brand`, `timeparse`, `backoff`,
 `notify`, `history`, `sessions`, `model`, `cli`) run without AwesomeWM;
 `widget.lua`, `popup.lua`, `bar.lua`, `icon.lua` and `init.lua` need it. See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout
-and the release steps.
+and the release steps, and the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 For bug reports, this prints versions, options and the current state without any secrets:
 
@@ -529,8 +551,22 @@ awesome-client 'return require("claude_usage").debug()'
 
 ## License
 
-MIT, see [LICENSE](LICENSE). `json.lua` is [rxi/json.lua](https://github.com/rxi/json.lua), also MIT.
+[MIT](LICENSE) © Daniel Kurdoghlian, Pushing Pixels. `json.lua` is [rxi/json.lua](https://github.com/rxi/json.lua), also MIT.
 
 This project is not affiliated with Anthropic. The usage endpoint is
 undocumented and may change or disappear; the widget degrades to its cached
 sources when it does.
+
+---
+
+<div align="center">
+  <a href="https://pushingpixels.at">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pushing-pixels-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="docs/assets/pushing-pixels-light.svg">
+      <img src="docs/assets/pushing-pixels.svg" alt="Pushing Pixels" width="320">
+    </picture>
+  </a>
+  <p>Built and maintained by <a href="https://pushingpixels.at">Daniel Kurdoghlian</a> at <a href="https://pushingpixels.at">Pushing Pixels</a> in Vienna.<br>
+  Wondering whether AI pays off for a task in your business? I test it on your own examples in a one-week <a href="https://pushingpixels.at/creates/ki-beratung">AI feasibility check</a>.</p>
+</div>
