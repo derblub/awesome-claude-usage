@@ -139,6 +139,10 @@ function Notifier:update(st, now)
 
 	if st.five_hour then
 		self:check_window("five_hour", "Session (5h)", st.five_hour, now)
+	elseif st.no_session_limit then
+		-- The plan has no 5h limit: nothing to announce, and a provisional window that shows up
+		-- again later starts fresh instead of reading as a reset of the old one.
+		self.windows.five_hour = nil
 	end
 	if st.seven_day then
 		self:check_window("seven_day", "Weekly (7d)", st.seven_day, now)

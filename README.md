@@ -10,7 +10,7 @@
 
 <h1>awesome-claude-usage</h1>
 
-<p><strong>Your Claude Code 5-hour and weekly limits in the AwesomeWM bar.</strong></p>
+<p><strong>Your Claude Code weekly limits, and the 5-hour window where your plan has one, in the AwesomeWM bar.</strong></p>
 
 <p>
   <a href="https://github.com/derblub/awesome-claude-usage/actions/workflows/ci.yml"><img src="https://github.com/derblub/awesome-claude-usage/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -40,7 +40,7 @@
 
 An [AwesomeWM](https://awesomewm.org/) wibar widget that shows how much of your
 [Claude Code](https://code.claude.com/) subscription limits you have used: the
-5-hour session window and the 7-day weekly window, exactly what `/usage` prints
+7-day weekly window and, where your plan has one, the 5-hour session window, exactly what `/usage` prints
 inside Claude Code, without leaving your editor.
 
 It looks the part: a terracotta chip with the starburst icon in the bar, and a
@@ -102,13 +102,33 @@ click opens Claude Code.
 |---|---|
 | ![bar](docs/screenshot.png) | ![popup](docs/popup.png) |
 
+More states (all values are made up):
+
+| Variant | Image |
+|---|---|
+| Bar, Max plan with a 5-hour window | ![bar-max](docs/variants/bar-max.png) |
+| Popup, Max plan with the session row | ![popup-max](docs/variants/popup-max.png) |
+| Bar, Ultra plan near the limit, with usage credits | ![bar-warning](docs/variants/bar-warning.png) |
+| Bar, API-key mode | ![bar-api-key](docs/variants/bar-api-key.png) |
+
+The images are reproducible: `docs/screenshots/generate.sh [--only ultra,max,warning,apikey]` feeds fake
+states through the real pipeline into AwesomeWM on a private Xvfb display and captures them.
+
+### Ultra plan: no 5-hour window
+
+Since 2026-10-30 the former Max 20x plan is called **Ultra** (Max 5x is now **Max**). A verified Ultra account
+has no 5-hour limit, only the weekly limit over all models and a separate weekly limit for Fable. The widget
+then leaves the 5-hour window out of the bar, the popup and the notifications instead of showing `5h --`,
+and the popup header reads "Ultra plan". New or unverified Ultra accounts keep a provisional 5-hour limit
+until they are verified; while that window exists it is shown like on any other plan.
+
 ## Requirements
 
 - AwesomeWM git (4.3-git, API level 4) is what it is developed and tested on. Stable 4.3 is
   untested; notifications fall back to `naughty.notify` there, but other API differences may bite
 - `curl`
 - Lua 5.1, 5.2, 5.3, 5.4 or LuaJIT (whatever your AwesomeWM is built against; the CLI runs on any of them)
-- Claude Code, logged in with a claude.ai Pro or Max subscription (API-key users have no rate-limit windows)
+- Claude Code, logged in with a claude.ai Pro, Max or Ultra subscription (API-key users have no rate-limit windows)
 - Any font; the icon is drawn with cairo. A Nerd Font is only needed for `icon = "glyph"`
 
 ## Installation
@@ -318,6 +338,8 @@ The state table:
     error      = nil,         -- or { code = "rate_limited", message = "...", retry_at = ... }
     next_fetch_at = 1758560300,
     subscription  = "max",
+    tier          = "default_claude_max_20x",  -- rateLimitTier from the credentials; a Max 20x tier is shown as Ultra
+    no_session_limit = nil,   -- true: the plan has no 5-hour window (Ultra); false: it has one; nil: unknown
 }
 ```
 
@@ -521,7 +543,7 @@ any `claude` command and the next check succeeds.
 | `!net` | curl failed or 5xx, no cached data | check connectivity; the widget retries with backoff |
 | `!parse` | the endpoint answered something unexpected (not JSON, no HTTP status, or an HTTP code other than 200/401/403/429/5xx), no cached data | check the popup for the HTTP code; if it persists the undocumented endpoint may have changed, open an issue with the `debug()` dump |
 | `!none` | every source failed | check the popup for the last error |
-| `5h --` | that window is absent from the response (e.g. no subscription) | nothing to do |
+| `5h --` | the 5-hour window is absent from the response, and the plan is not known to be without one (e.g. an expired window on Max, or no subscription); on Ultra the row is left out instead | nothing to do |
 | a box instead of the icon | `icon = "glyph"` without a Nerd Font | use `icon = "starburst"` or set `glyph` |
 | `⚑` after the numbers | a Claude Code session waits for your input or a permission | switch to that terminal; `sessions_in_bar = false` hides it |
 | no forecast line in the popup | fewer than 15 min (5h) / 3 h (weekly) of samples in this reset cycle | wait; check that `history.csv` is being written |

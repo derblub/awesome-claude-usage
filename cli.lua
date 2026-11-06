@@ -167,6 +167,7 @@ if not state and network then
 				state = normalize.from_api(res, now)
 				state.source = "api"
 				state.subscription = creds.subscription
+				state.tier = creds.tier
 				fresh = true
 				last.retry_at = nil
 				last.retry_code = nil
@@ -227,7 +228,28 @@ end
 if not state and last.state then
 	state = last.state
 end
-state = normalize.expire(state or { scoped = {} }, now)
+state = state or { scoped = {} }
+-- Plan fields for every source (an expired token still names the plan), as in model.lua.
+if not state.subscription then
+	local creds, _, partial = credentials.read(opts.credentials_path, now)
+	local c = creds or partial
+	if c then
+		state.subscription = c.subscription
+		state.tier = c.tier
+	end
+end
+-- A statusLine cache without five_hour may only mean the window expired: take the flag from the
+-- last result of the same weekly cycle (see merge_api_details in model.lua).
+local prev = last.state
+if state.no_session_limit == nil and prev and prev ~= state and prev.no_session_limit ~= nil then
+	local a = state.seven_day and state.seven_day.resets_at
+	local b = prev.seven_day and prev.seven_day.resets_at
+	if a and b and math.abs(a - b) <= 120 and b > now then
+		state.no_session_limit = prev.no_session_limit
+	end
+end
+normalize.settle_session_limit(state, normalize.is_ultra(state.subscription, state.tier))
+state = normalize.expire(state, now)
 state.error = err
 state.stale = state.fetched_at ~= nil and (now - state.fetched_at) > opts.stale_after
 

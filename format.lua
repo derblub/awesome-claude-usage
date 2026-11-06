@@ -74,6 +74,7 @@ function M.window(st, key)
 end
 
 --- Percentage that drives colours: the highest window, or the one named by opts.color_window.
+--- A plan without a 5h limit colours by the highest window when color_window = "five_hour".
 ---@param st table|nil
 ---@param opts table|nil
 ---@return number|nil
@@ -82,6 +83,9 @@ function M.max_percent(st, opts)
 		return nil
 	end
 	local which = opts and opts.color_window or "max"
+	if which == "five_hour" and st.no_session_limit then
+		which = "max"
+	end
 	if which ~= "max" then
 		local w = M.window(st, which)
 		return w and w.percent or nil
@@ -287,12 +291,17 @@ function M.bar_text(st, opts)
 				for _, w in ipairs(st.scoped or {}) do
 					parts[#parts + 1] = short[tostring(w.name)] .. " " .. pct_text(w)
 				end
-			else
+			-- no 5h limit on this plan: leave the window out instead of showing "5h --"
+			elseif not (key == "five_hour" and st.no_session_limit) then
 				local name = key:match("^scoped:(.+)$")
 				local label = key == "five_hour" and "5h" or key == "seven_day" and "7d" or name and short[name] or key
 				parts[#parts + 1] = label .. " " .. pct_text(M.window(st, key))
 			end
 		end
+	end
+	-- bar_windows = { "five_hour" } on a plan without a 5h limit: show the weekly window instead
+	if not opts.compact and #parts == 0 and st.no_session_limit then
+		parts[1] = "7d " .. pct_text(st.seven_day)
 	end
 	local text = glyph .. table.concat(parts, opts.separator or " · ")
 	local spending = st.spend and st.spend.enabled and ((st.spend.percent or 0) > 0 or (st.spend.used or 0) > 0)
@@ -544,8 +553,9 @@ function M.popup_lines(st, now, opts)
 	opts = opts or {}
 	local lines = {}
 	local title = "Claude usage"
-	if st and st.subscription then
-		title = title .. " (" .. tostring(st.subscription) .. ")"
+	local plan = st and M.plan_name(st.subscription, st.tier)
+	if plan then
+		title = title .. " (" .. plan .. ")"
 	end
 	lines[#lines + 1] = title
 
@@ -562,8 +572,10 @@ function M.popup_lines(st, now, opts)
 				lines[#lines + 1] = "    " .. text
 			end
 		end
-		lines[#lines + 1] = window_line("Session (5h)", st.five_hour, now) or "Session (5h): --"
-		add_forecast(fcs.five_hour)
+		if not st.no_session_limit then
+			lines[#lines + 1] = window_line("Session (5h)", st.five_hour, now) or "Session (5h): --"
+			add_forecast(fcs.five_hour)
+		end
 		lines[#lines + 1] = window_line("Weekly (7d)", st.seven_day, now) or "Weekly (7d): --"
 		add_forecast(fcs.seven_day)
 		if opts.popup_show_scoped ~= false then
@@ -648,14 +660,24 @@ function M.chip_color(st, opts)
 	return brand.level_color(M.state_level(st, opts.thresholds or {}, opts), chip)
 end
 
-local SUBSCRIPTION_NAME = { max = "Max", pro = "Pro", team = "Team", enterprise = "Enterprise", free = "Free" }
+local SUBSCRIPTION_NAME = {
+	max = "Max",
+	ultra = "Ultra",
+	pro = "Pro",
+	team = "Team",
+	enterprise = "Enterprise",
+	free = "Free",
+}
 
---- Human readable plan name.
-function M.plan_name(subscription)
+--- Human readable plan name. Ultra is the former Max 20x (see normalize.is_ultra).
+---@param subscription string|nil subscriptionType from the credentials
+---@param tier string|nil rateLimitTier from the credentials
+function M.plan_name(subscription, tier)
 	if type(subscription) ~= "string" or subscription == "" then
 		return nil
 	end
-	return (SUBSCRIPTION_NAME[subscription:lower()] or subscription) .. " plan"
+	local key = normalize.is_ultra(subscription, tier) and "ultra" or subscription:lower()
+	return (SUBSCRIPTION_NAME[key] or subscription) .. " plan"
 end
 
 --- Structured content for the graphical popup.
@@ -675,7 +697,7 @@ function M.popup_rows(st, now, opts)
 	end
 
 	local sub = {}
-	local plan = M.plan_name(st.subscription)
+	local plan = M.plan_name(st.subscription, st.tier)
 	if plan then
 		sub[#sub + 1] = plan
 	end
@@ -707,7 +729,9 @@ function M.popup_rows(st, now, opts)
 				pace = pace,
 			}
 		end
-		add("five_hour", "Session", "5-hour window", st.five_hour, fcs.five_hour, paces.five_hour)
+		if not st.no_session_limit then
+			add("five_hour", "Session", "5-hour window", st.five_hour, fcs.five_hour, paces.five_hour)
+		end
 		add("seven_day", "Weekly", "7-day window", st.seven_day, fcs.seven_day, paces.seven_day)
 		if opts.popup_show_scoped ~= false then
 			for _, w in ipairs(st.scoped or {}) do

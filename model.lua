@@ -181,7 +181,8 @@ local function record(st, t)
 end
 
 --- The statusLine and Claude Desktop only carry the two main windows. Keep the per-model
---- limits, the breakdown and the spend from the last API answer while the weekly cycle is the same.
+--- limits, the breakdown, the spend and whether the plan has a 5h limit from the last API answer
+--- while the weekly cycle is the same.
 local function merge_api_details(st, t)
 	if (st.source ~= "statusline" and st.source ~= "desktop") or not _last_api then
 		return
@@ -203,6 +204,10 @@ local function merge_api_details(st, t)
 	end
 	if not same_cycle then
 		return
+	end
+	-- A statusLine cache without five_hour may only mean the window expired; the API knows.
+	if st.no_session_limit == nil then
+		st.no_session_limit = _last_api.no_session_limit
 	end
 	if #(st.scoped or {}) == 0 and _last_api.scoped and #_last_api.scoped > 0 then
 		st.scoped = {}
@@ -234,6 +239,8 @@ local function finalize(st, delay, err)
 	st.error = err
 	st.stale = is_stale(st, t)
 	st.subscription = (_creds and _creds.subscription) or (M.state and M.state.subscription) or nil
+	st.tier = (_creds and _creds.tier) or (M.state and M.state.tier) or nil
+	normalize.settle_session_limit(st, normalize.is_ultra(st.subscription, st.tier))
 	if normalize.has_data(st) then
 		_last_good = st
 	end
@@ -453,6 +460,8 @@ local function prime_from_cache()
 	end
 	st.stale = is_stale(st, t)
 	st.subscription = _creds and _creds.subscription or nil
+	st.tier = _creds and _creds.tier or nil
+	normalize.settle_session_limit(st, normalize.is_ultra(st.subscription, st.tier))
 	_last_good = st
 	st = normalize.expire(st, t)
 	attach_analysis(st, t)

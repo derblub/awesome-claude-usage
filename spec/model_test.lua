@@ -614,3 +614,70 @@ describe("model (robustness)", function()
 		assert_eq(model.state.source, "api")
 	end)
 end)
+
+describe("model (no 5h limit)", function()
+	local ULTRA_BODY = H.read("spec/fixtures/api_ultra.json")
+	local ULTRA_RESET = 1794409200 -- seven_day.resets_at of the Ultra fixture (2026-11-11T15:00Z)
+	local CREDS_5X = "spec/tmp/credentials_max5x.json"
+	write_cache(CREDS_5X, '{"claudeAiOauth": {"accessToken": "REDACTED-TOKEN", "expiresAt": 4102444800000,'
+		.. ' "subscriptionType": "max", "rateLimitTier": "default_claude_max_5x"}}')
+	local function weekly_only(path, t, resets_at)
+		write_cache(path, '{"ts":' .. t .. ',"rate_limits":{"seven_day":{"used_percentage":51,"resets_at":'
+			.. resets_at .. "}}}")
+	end
+
+	it("takes the flag from the API answer of the same cycle for a statusLine state", function()
+		local path = "spec/tmp/ultra_cache.json"
+		os.remove(path)
+		-- Max 5x credentials: only the API answer can tell that the plan has no 5h limit
+		local deps = setup({ fresh_cache_max_age = 120, cache_path = path, credentials_path = CREDS_5X })
+		deps.t = ULTRA_RESET - 3 * 86400
+		deps.timers[1]:fire()
+		H.respond(deps, ULTRA_BODY, 200)
+		assert_eq(model.state.source, "api")
+		assert_nil(model.state.five_hour)
+		assert_true(model.state.no_session_limit)
+		deps.t = deps.t + 60
+		weekly_only(path, deps.t, ULTRA_RESET)
+		deps.timers[1]:fire()
+		assert_eq(model.state.source, "statusline")
+		assert_true(model.state.no_session_limit)
+		assert_nil(model.state.five_hour, "no placeholder window")
+		-- another weekly cycle: the old answer says nothing, a Max plan keeps the placeholder
+		weekly_only(path, deps.t + 1, ULTRA_RESET + 7 * 86400)
+		deps.t = deps.t + 1
+		model.cache_changed()
+		assert_eq(model.state.source, "statusline")
+		assert_nil(model.state.no_session_limit)
+		assert_true(model.state.five_hour.assumed)
+		os.remove(path)
+	end)
+
+	it("keeps an expired 5h window of an account that has one", function()
+		local path = "spec/tmp/max_cache.json"
+		os.remove(path)
+		-- API_BODY carries a session window: an unverified Ultra account (20x tier) has a 5h limit
+		local deps = setup({ fresh_cache_max_age = 120, cache_path = path })
+		deps.t = WEEK_RESET - 3 * 86400
+		deps.timers[1]:fire()
+		H.respond(deps, API_BODY, 200)
+		assert_eq(model.state.no_session_limit, false)
+		deps.t = deps.t + 60
+		weekly_only(path, deps.t, WEEK_RESET)
+		deps.timers[1]:fire()
+		assert_eq(model.state.source, "statusline")
+		assert_eq(model.state.no_session_limit, false)
+		assert_true(model.state.five_hour.assumed)
+		os.remove(path)
+	end)
+
+	it("drops the 5h window on Ultra at a cold start from the statusLine cache", function()
+		local path = "spec/tmp/ultra_cold.json"
+		weekly_only(path, 1758560000, 1758900000)
+		setup({ cache_path = path, sources = { "statusline" } }) -- credentials: Max with the 20x tier
+		assert_eq(model.state.source, "statusline")
+		assert_nil(model.state.five_hour)
+		assert_true(model.state.no_session_limit)
+		os.remove(path)
+	end)
+end)

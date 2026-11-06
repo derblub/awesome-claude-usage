@@ -7,6 +7,12 @@
 --   spend      = { enabled, percent, used, currency, limit } | nil
 --   breakdown  = { { name, percent }, ... } | nil
 --   fetched_at = epoch
+--   no_session_limit = true | false | nil
+--                The plan has no 5-hour limit (Ultra once the account is verified): true when a
+--                source carries the weekly window but no 5h window at all, false when a 5h window
+--                is there, nil when unknown (the statusLine drops expired windows). model.lua
+--                settles nil from the last API answer of the same weekly cycle or from the plan,
+--                and settle_session_limit drops the 5h window when the flag is true.
 --   context    = { percent, size, input_tokens, model, session_id, at } | nil
 --   session_cost* = { usd, at, session_id } | nil
 --   source*, stale*, error*, next_fetch_at*, subscription*, fallback*, api_key_mode*
@@ -101,10 +107,12 @@ function M.from_api(raw, now)
 	if type(raw) ~= "table" then
 		return st
 	end
+	local session_seen = type(raw.five_hour) == "table" -- an unreadable 5h window still is one
 
 	if type(raw.limits) == "table" then
 		for _, l in ipairs(raw.limits) do
 			if type(l) == "table" then
+				session_seen = session_seen or l.kind == "session"
 				local w = window(percent(l.percent), timeparse.iso8601(l.resets_at), {
 					kind = l.kind,
 					is_active = l.is_active == true,
@@ -150,6 +158,12 @@ function M.from_api(raw, now)
 		if w.resets_at == nil and st.seven_day then
 			w.resets_at = st.seven_day.resets_at
 		end
+	end
+
+	if session_seen then
+		st.no_session_limit = false
+	elseif st.seven_day then
+		st.no_session_limit = true
 	end
 
 	st.spend = spend_from(raw)
@@ -254,6 +268,12 @@ function M.from_desktop(raw, now)
 	end
 	st.five_hour = window(percent(raw.u.fh), nil)
 	st.seven_day = window(percent(raw.u.sd), nil)
+	-- Since the 5h limit went away for Ultra, Desktop writes samples with sd only.
+	if raw.u.fh ~= nil then
+		st.no_session_limit = false
+	elseif st.seven_day then
+		st.no_session_limit = true
+	end
 	local t = epoch_seconds(raw.t)
 	if t then
 		st.fetched_at = t
@@ -403,6 +423,47 @@ function M.expire(st, now)
 		end
 	end
 	return out
+end
+
+--- Whether the plan is Ultra (the former Max 20x): credentials may still report
+--- subscriptionType "max" with a 20x rate limit tier.
+---@param subscription string|nil subscriptionType from the credentials
+---@param tier string|nil rateLimitTier from the credentials
+---@return boolean
+function M.is_ultra(subscription, tier)
+	if type(subscription) ~= "string" then
+		return false
+	end
+	local key = subscription:lower()
+	if key == "ultra" then
+		return true
+	end
+	return key == "max" and type(tier) == "string" and tier:lower():find("max_20x", 1, true) ~= nil
+end
+
+--- Settle no_session_limit and drop the 5h window it rules out (in place). A real 5h window
+--- always means false: an unverified Ultra account has a provisional one, Max and Pro have one.
+--- Without one, a flag the source set stays; an unknown flag counts as true on Ultra, so a cold
+--- start from a statusLine cache without five_hour does not show a placeholder window.
+---@param st table|nil
+---@param ultra boolean the plan is Ultra (is_ultra)
+---@return table|nil state
+function M.settle_session_limit(st, ultra)
+	if type(st) ~= "table" then
+		return st
+	end
+	local w = st.five_hour
+	if type(w) == "table" and not w.assumed then
+		st.no_session_limit = false
+		return st
+	end
+	if st.no_session_limit == nil and ultra then
+		st.no_session_limit = true
+	end
+	if st.no_session_limit then
+		st.five_hour = nil
+	end
+	return st
 end
 
 --- Whether the state carries at least one usage window.
