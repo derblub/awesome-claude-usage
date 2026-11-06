@@ -5,6 +5,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-06
+
+### Added
+- Ultra plan: Max 20x is now called Ultra and has no 5-hour limit. The new state field
+  `no_session_limit` (`true`, `false`, or `nil` when unknown) is derived from the API answer, from
+  Claude Desktop's history (`sd` without `fh`), from the last API answer of the same weekly cycle for
+  the statusLine cache, and from an Ultra plan without any 5-hour window (cold start). A 5-hour window
+  that is present always counts and is shown normally (provisional limit of unverified accounts).
+- The state carries the credentials' `tier`; `plan_name` maps `ultra` and `max` with a Max 20x tier to
+  "Ultra plan" and any other Max tier to "Max plan". The tier survives missing credentials.
+- Screenshot generator `docs/screenshots/generate.sh` (fake states through the real pipeline, Xvfb on
+  a private display) and new images under `docs/variants/`.
+- Fixture `spec/fixtures/api_ultra.json` and specs for the new behaviour.
+
+### Changed
+- With `no_session_limit` the bar, the text popup, the graphical popup and the notifications leave the
+  5-hour window out instead of showing `5h --`; `color_window = "five_hour"` then behaves like `"max"`.
+  Without the flag (e.g. an expired window on Max) `5h --` stays. If `bar_windows` names only the
+  5-hour window, the bar shows the weekly window instead of nothing.
+- `cli.lua` applies the same rule: plan fields from the credentials for every source, the flag from
+  the last result of the same weekly cycle, no placeholder `5h 0%` on Ultra.
+- The popup title names the plan ("Claude usage (Max plan)" / "(Ultra plan)") instead of the raw
+  subscription type.
+- README and screenshots show the Ultra plan.
+
 ## [0.6.0] - 2026-10-27
 
 ### Added
