@@ -10,8 +10,8 @@
 #   }
 #
 # The widget then rescans ~/.claude/sessions right away and, for a Notification that
-# needs you (permission prompt, question, idle prompt), shows the desktop notification
-# without waiting for the next scan. Only the event name, the notification type and the
+# needs you (permission prompt, question; idle prompt only with notify_idle), shows the
+# desktop notification without waiting for the next scan. Stop takes it back. Only the event name, the notification type and the
 # session id are passed on; the message text stays in Claude Code.
 
 command -v awesome-client >/dev/null 2>&1 || exit 0

@@ -5,6 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Threshold notifications repeated every few minutes: the API reports the same reset a second
+  earlier or later between answers, and every step forward counted as a new cycle. A new cycle now
+  needs `resets_at` to move by more than five minutes.
+
+### Changed
+- Several windows crossing a threshold in the same answer make one notification (one line each, the
+  highest urgency wins) instead of one notification per window.
+- A session has at most one "needs your attention" notification. It is replaced by the next one and
+  taken back when the session moves on (status change, `Stop` hook, exit); the popup closes and the
+  notification object emits `withdrawn` for notification histories.
+- No "needs your attention" notification for an idle prompt (the session is only waiting for the
+  next prompt); `notify_idle = true` brings it back.
+- No "needs your attention" notification while the focused window belongs to the session;
+  `notify_focused = true` brings it back.
+
 ## [0.7.0] - 2026-11-06
 
 ### Added

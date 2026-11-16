@@ -41,6 +41,8 @@ M.defaults = {
 	watch_cache = true, -- react to the statusLine cache instantly via inotifywait (if installed)
 	context_max_age = 900, -- show the active session's context window and cost while the cache is this fresh
 	notify_attention = true, -- a session waits for a permission or an answer
+	notify_idle = false, -- also when a session is merely done and waiting for the next prompt
+	notify_focused = false, -- also while the session's own window has the focus
 	notify_finished = false, -- a session went from working to idle
 
 	-- History and forecast

@@ -493,6 +493,9 @@ local function poll_sessions()
 	end
 	local prev = _sessions
 	_sessions = summary
+	if _notifier then
+		pcall(_notifier.sync_sessions, _notifier, summary, t)
+	end
 	local changed = not prev
 		or prev.total ~= summary.total
 		or prev.working ~= summary.working
@@ -647,7 +650,10 @@ function M.hook(event, kind, session_id)
 				session = s
 			end
 		end
-		pcall(_notifier.attention, _notifier, session or { session_id = session_id }, now())
+		pcall(_notifier.attention, _notifier, session or { session_id = session_id }, now(), kind)
+	elseif event == "Stop" and _notifier then
+		-- The turn is over: whatever the session asked for has been answered.
+		pcall(_notifier.resolve, _notifier, session_id)
 	end
 	M.poll_sessions()
 end

@@ -92,19 +92,53 @@ local function real_deps()
 		timer = function(args)
 			return gears.timer(args)
 		end,
+		-- Returns the notification, so that it can be withdrawn later (see dismiss).
 		notify = function(args)
 			if naughty.notification then
-				naughty.notification(args)
-			else
-				-- awesome 4.3 stable has no notification object API
-				naughty.notify({
-					title = args.title,
-					text = args.message,
-					timeout = args.timeout,
-					icon = args.icon,
-					preset = args.urgency == "critical" and naughty.config.presets.critical or nil,
-				})
+				return naughty.notification(args)
 			end
+			-- awesome 4.3 stable has no notification object API
+			return naughty.notify({
+				title = args.title,
+				text = args.message,
+				timeout = args.timeout,
+				icon = args.icon,
+				preset = args.urgency == "critical" and naughty.config.presets.critical or nil,
+			})
+		end,
+		-- Take a notification back: close the popup if it is still up, and tell notification
+		-- histories through the "withdrawn" signal on the object (an expired popup is already
+		-- destroyed, so "destroyed" cannot fire a second time).
+		dismiss = function(n)
+			if type(n) ~= "table" then
+				return
+			end
+			local reason = naughty.notification_closed_reason
+				and naughty.notification_closed_reason.dismissed_by_user
+				or naughty.notificationClosedReason and naughty.notificationClosedReason.dismissedByUser
+			if naughty.notification then
+				local private = rawget(n, "_private")
+				if not (private and private.is_destroyed) then
+					n:destroy(reason)
+				end
+				n:emit_signal("withdrawn")
+			else
+				naughty.destroy(n, reason)
+			end
+		end,
+		focused_pid = function()
+			local c = client.focus
+			return c and c.pid or nil
+		end,
+		parent_pid = function(pid)
+			local f = io.open("/proc/" .. tostring(pid) .. "/stat", "r")
+			if not f then
+				return nil
+			end
+			local stat = f:read("*l") or ""
+			f:close()
+			-- "pid (comm) state ppid ..."; comm may contain spaces and parentheses
+			return tonumber(stat:match("^.*%)%s+%S+%s+(%d+)"))
 		end,
 		warn = warn,
 	}

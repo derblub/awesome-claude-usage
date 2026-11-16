@@ -201,6 +201,8 @@ claude_usage.new({
     watch_cache   = true,     -- read the statusLine cache the moment it changes (needs inotifywait)
     context_max_age = 900,    -- show the active session's context window and cost while the cache is this fresh
     notify_attention = true,  -- a session waits for a permission or an answer
+    notify_idle = false,      -- also when a session is merely done and waiting for the next prompt
+    notify_focused = false,   -- also while the session's own window has the focus
     notify_finished = false,  -- a session went from working to idle
 
     -- History and forecast
@@ -388,7 +390,8 @@ of the cache instantly (`watch_cache`); otherwise it reads it on the next fetch.
 for the `Notification` and `Stop` events. It calls `awesome-client` with the event name,
 the notification type and the session id (nothing else), so the widget rescans
 `~/.claude/sessions` right away and raises the "needs your attention" notification for
-permission prompts, questions and idle prompts without waiting for the next scan.
+permission prompts and questions without waiting for the next scan (idle prompts too with
+`notify_idle = true`). A `Stop` event takes the session's notification back.
 
 ```json
 "hooks": {
@@ -453,7 +456,14 @@ The widget scans that directory every `sessions_interval` seconds (local files o
 and skips files whose process is gone. States are mapped to *working* (`busy`),
 *idle* and *attention* (`waiting`, `needs_input`). The popup lists the counts, the bar
 text gets `attention_flag` appended while any session waits for you, and
-`notify_attention` / `notify_finished` control the desktop notifications. The scan
+`notify_attention` / `notify_finished` control the desktop notifications. A session has
+at most one "needs your attention" notification: a new one replaces it, and it is taken
+back once the session moves on (its status changes, its turn ends or it exits). Nothing is
+shown while the focused window belongs to the session, i.e. its process is the session or
+one of its ancestors (terminal, or the desktop app); `notify_focused = true` turns that
+off. Taking a notification back closes the popup and emits `withdrawn` on the notification
+object, so a notification history can drop its entry even after the popup expired:
+`n:connect_signal("withdrawn", function() ... end)`. The scan
 also drives the polling interval: `interval` while something is working,
 `interval_idle` otherwise, plus one early fetch when work starts or stops.
 Set `sessions = false` to turn all of this off.

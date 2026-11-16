@@ -21,27 +21,142 @@ function M.new(opts, deps)
 		last_error = nil, -- error table of the last counted failure (re-emits of a state share it)
 		last_error_at = nil,
 		last_attention = {}, -- session key -> epoch of the last attention notification
+		notes = {}, -- session key -> { handle, at, seen, pid, session_id } of the visible attention note
 	}, Notifier)
 end
 
 local ATTENTION_WINDOW = 60
+-- The API reports the same reset a second earlier or later from one answer to the next. A real new
+-- cycle moves resets_at by hours, so anything within this slack is the same cycle.
+local RESET_SLACK = 300
+local URGENCY_RANK = { low = 1, normal = 2, critical = 3 }
+
+local function session_key(session)
+	return session and (session.session_id or session.pid or session.name) or "unknown"
+end
+
+--- True when the focused window belongs to the session: its process is the session's process or
+--- one of its ancestors (terminal -> shell -> claude, or the desktop app -> claude).
+function Notifier:focused(session)
+	local deps = self.deps
+	if not session or not session.pid or type(deps.focused_pid) ~= "function" or type(deps.parent_pid) ~= "function" then
+		return false
+	end
+	local ok, focused = pcall(deps.focused_pid)
+	if not ok or not focused then
+		return false
+	end
+	local pid = session.pid
+	for _ = 1, 16 do
+		if pid == focused then
+			return true
+		end
+		local ok_parent, parent = pcall(deps.parent_pid, pid)
+		if not ok_parent or type(parent) ~= "number" or parent <= 1 then
+			return false
+		end
+		pid = parent
+	end
+	return false
+end
+
+--- Take the session's attention note off the screen (and out of notification histories).
+---@param key any session key
+---@param rearm boolean|nil true: the session moved on, so its next prompt may notify at once
+function Notifier:withdraw(key, rearm)
+	local note = self.notes[key]
+	if note then
+		self.notes[key] = nil
+		if note.handle ~= nil and type(self.deps.dismiss) == "function" then
+			pcall(self.deps.dismiss, note.handle)
+		end
+	end
+	if rearm then
+		self.last_attention[key] = nil
+	end
+end
+
+--- The session answered or ended its turn (hook events): its note is obsolete.
+function Notifier:resolve(session_id)
+	if session_id ~= nil and session_id ~= "" then
+		self:withdraw(session_id, true)
+	end
+end
+
+--- Withdraw attention notes whose session has moved on. Call with every sessions scan.
+---@param summary table sessions.read() result
+function Notifier:sync_sessions(summary, now)
+	if next(self.notes) == nil then
+		return
+	end
+	local by_id, by_pid = {}, {}
+	for _, s in ipairs((summary and summary.list) or {}) do
+		if s.session_id then
+			by_id[s.session_id] = s
+		end
+		if s.pid then
+			by_pid[s.pid] = s
+		end
+	end
+	local moved = {}
+	for key, note in pairs(self.notes) do
+		local s = (note.session_id and by_id[note.session_id]) or (note.pid and by_pid[note.pid])
+		if not s then
+			-- Not in the scan: with a pid it was a listed session that has ended. A note from a hook
+			-- for a session the scan never saw stays as it is.
+			if note.pid then
+				moved[#moved + 1] = key
+			end
+		elseif s.status == "attention" then
+			note.seen = true
+		else
+			-- Left the attention state, or changed its status after the note went up. A session
+			-- that asks for a permission can stay "busy" throughout; that note is kept.
+			local updated = s.since and (now - s.since) or nil
+			if note.seen or (updated and updated > note.at) then
+				moved[#moved + 1] = key
+			end
+		end
+	end
+	for _, key in ipairs(moved) do
+		self:withdraw(key, true)
+	end
+end
 
 --- Announce that a session needs the user; repeats within a minute are dropped.
 ---@param session table|nil { name, pid, session_id }
+--- A session keeps one note: a new one replaces it, and it is withdrawn when the session moves on.
 ---@param now integer
+---@param kind string|nil notification type from the hook ("permission_prompt", "idle_prompt", ...)
 ---@return boolean sent
-function Notifier:attention(session, now)
+function Notifier:attention(session, now, kind)
 	if not self.opts.notify_attention then
 		return false
 	end
-	local key = session and (session.session_id or session.pid or session.name) or "unknown"
+	-- "Idle prompt" only says the session is done and waiting for the next prompt.
+	if kind == "idle_prompt" and not self.opts.notify_idle then
+		return false
+	end
+	local key = session_key(session)
 	local last = self.last_attention[key]
 	if last and now - last < ATTENTION_WINDOW then
 		return false
 	end
+	-- The user is looking at the session: the prompt is on screen already.
+	if not self.opts.notify_focused and self:focused(session) then
+		return false
+	end
 	self.last_attention[key] = now
+	self:withdraw(key)
 	local name = session and (session.name or (session.pid and ("pid " .. tostring(session.pid)))) or "A session"
-	self:emit({ title = "Claude Code", message = name .. " needs your attention", urgency = "normal" })
+	local handle = self:emit({ title = "Claude Code", message = name .. " needs your attention", urgency = "normal" })
+	self.notes[key] = {
+		handle = handle,
+		at = now,
+		seen = session ~= nil and session.status == "attention",
+		pid = session and session.pid,
+		session_id = session and session.session_id,
+	}
 	return true
 end
 
@@ -53,7 +168,31 @@ function Notifier:emit(args)
 	args.timeout = self.opts.notify_timeout
 	args.icon = self.opts.notify_icon
 	args.app_name = "claude_usage"
-	pcall(self.deps.notify, args)
+	local ok, handle = pcall(self.deps.notify, args)
+	if ok then
+		return handle
+	end
+end
+
+--- Queue a usage message; update() sends everything it queued as one notification.
+function Notifier:queue(message, urgency)
+	local batch = self.batch
+	if not batch then
+		self:emit({ message = message, urgency = urgency })
+		return
+	end
+	batch[#batch + 1] = message
+	if (URGENCY_RANK[urgency] or 0) > (URGENCY_RANK[batch.urgency] or 0) then
+		batch.urgency = urgency
+	end
+end
+
+function Notifier:flush()
+	local batch = self.batch
+	self.batch = nil
+	if batch and #batch > 0 then
+		self:emit({ message = table.concat(batch, "\n"), urgency = batch.urgency })
+	end
 end
 
 function Notifier:check_window(key, label, w, now)
@@ -64,11 +203,16 @@ function Notifier:check_window(key, label, w, now)
 	if stored then
 		-- A new cycle shows up as a later resets_at (or a big drop); the clock alone is not a reset,
 		-- otherwise a stale past resets_at would re-trigger the notification on every redraw.
-		local reset = (w.resets_at ~= nil and stored.resets_at ~= nil and w.resets_at > stored.resets_at)
+		-- resets_at wobbles by a second between answers, so "later" needs a real distance.
+		local reset = (
+			w.resets_at ~= nil
+			and stored.resets_at ~= nil
+			and w.resets_at - stored.resets_at > RESET_SLACK
+		)
 			or (stored.percent - w.percent > 20)
 		if reset then
 			if self.opts.notify_reset and stored.level ~= "normal" and level == "normal" then
-				self:emit({ message = label .. " window reset, now at " .. format.percent(w.percent) .. "%" })
+				self:queue(label .. " window reset, now at " .. format.percent(w.percent) .. "%")
 			end
 			stored = nil
 		end
@@ -83,7 +227,7 @@ function Notifier:check_window(key, label, w, now)
 		if rel and rel ~= "expired" then
 			msg = msg .. " (resets in " .. rel .. ")"
 		end
-		self:emit({ message = msg, urgency = level == "crit" and "critical" or "normal" })
+		self:queue(msg, level == "crit" and "critical" or "normal")
 	end
 
 	stored.level = level
@@ -137,6 +281,8 @@ function Notifier:update(st, now)
 		return
 	end
 
+	-- Several windows crossing a threshold in the same answer make one notification, not one each.
+	self.batch = {}
 	if st.five_hour then
 		self:check_window("five_hour", "Session (5h)", st.five_hour, now)
 	elseif st.no_session_limit then
@@ -158,6 +304,7 @@ function Notifier:update(st, now)
 		self:check_window("spend", "Extra usage", pseudo, now)
 		self.opts.thresholds = saved
 	end
+	self:flush()
 end
 
 return M
